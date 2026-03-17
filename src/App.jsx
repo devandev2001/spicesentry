@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2 } from 'lucide-react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -283,6 +283,101 @@ function App() {
     setActiveTab('dashboard');
   };
 
+  // ── Transfer Modal ──
+  const [transferModal, setTransferModal] = useState(false);
+  const [tfFrom, setTfFrom] = useState(SHOPS[0]);
+  const [tfTo, setTfTo] = useState(SHOPS[1]);
+  const [tfSpice, setTfSpice] = useState(SPICES[0].id);
+  const [tfQty, setTfQty] = useState('');
+
+  const openTransferModal = () => {
+    setTfFrom(selectedShop);
+    setTfTo(SHOPS.find(s => s !== selectedShop) || SHOPS[0]);
+    setTfSpice(SPICES[0].id);
+    setTfQty('');
+    setTransferModal(true);
+  };
+
+  // Compute available qty for the selected source + spice
+  const tfAvailableQty = (() => {
+    if (!transferModal) return 0;
+    const load = getLoad(tfFrom, tfSpice);
+    const se = entries.filter(e => e.shop === tfFrom && e.loadId === load.id && e.type === tfSpice);
+    const ss = sales.filter(s => s.shop === tfFrom && s.loadId === load.id && s.type === tfSpice);
+    const bought = se.reduce((s, e) => s + Number(e.qty), 0);
+    const sold = ss.reduce((s, e) => s + Number(e.qty), 0);
+    return Math.max(0, bought - sold);
+  })();
+
+  // Compute avg buy price at source for this spice (cost-relief)
+  const tfAvgPrice = (() => {
+    if (!transferModal) return 0;
+    const load = getLoad(tfFrom, tfSpice);
+    const se = entries.filter(e => e.shop === tfFrom && e.loadId === load.id && e.type === tfSpice);
+    const ss = sales.filter(s => s.shop === tfFrom && s.loadId === load.id && s.type === tfSpice);
+    const totalVal = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+    const soldVal = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+    const totalQty = se.reduce((s, e) => s + Number(e.qty), 0);
+    const soldQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+    const remQty = Math.max(0, totalQty - soldQty);
+    const remVal = totalVal - soldVal;
+    return remQty > 0 ? +(remVal / remQty).toFixed(2) : (totalQty > 0 ? +(totalVal / totalQty).toFixed(2) : 0);
+  })();
+
+  const handleTransfer = async () => {
+    const qty = parseFloat(tfQty);
+    if (!qty || qty <= 0 || qty > tfAvailableQty || tfFrom === tfTo) return;
+
+    const price = tfAvgPrice;
+    const fromLoad = getLoad(tfFrom, tfSpice);
+    const toLoad = getLoad(tfTo, tfSpice);
+    const now = new Date().toISOString();
+    const ts = Date.now();
+
+    // Record as sale from source (buyerName = "Transfer → dest")
+    const transferOut = {
+      shop: tfFrom,
+      type: tfSpice,
+      qty,
+      sellPrice: price,
+      buyerName: `Transfer → ${tfTo}`,
+      id: ts,
+      loadId: fromLoad.id,
+      totalValue: qty * price,
+      kind: 'sale',
+      date: now,
+    };
+
+    // Record as purchase at destination
+    const transferIn = {
+      shop: tfTo,
+      type: tfSpice,
+      qty,
+      price,
+      id: ts + 1,
+      loadId: toLoad.id,
+      totalValue: qty * price,
+      date: now,
+    };
+
+    setSales(prev => [transferOut, ...prev]);
+    setEntries(prev => [transferIn, ...prev]);
+
+    // Sync to Google Sheets
+    try {
+      await Promise.all([
+        fetch(LOCAL_SALE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transferOut) }),
+        fetch(LOCAL_BACKEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transferIn) }),
+      ]);
+    } catch (err) {
+      console.error("Error syncing transfer to Sheets:", err);
+    }
+
+    setTransferModal(false);
+    setActiveTab('dashboard');
+    setSelectedShop(tfTo);
+  };
+
   return (
     <>
       <div className="content-area">
@@ -295,6 +390,7 @@ function App() {
             onSelectShop={setSelectedShop}
             days={daysSinceLoadStart}
             onDispatch={handleDispatchLoad}
+            onTransfer={openTransferModal}
           />
         )}
         {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
@@ -443,12 +539,174 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Transfer Stock Modal */}
+      {transferModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
+          animation: 'fadeIn 0.2s ease',
+        }} onClick={() => setTransferModal(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '92%', maxWidth: 400,
+            background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+            borderRadius: 16, padding: '1.5rem',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            maxHeight: '90vh', overflowY: 'auto',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.25rem' }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 12,
+                background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <ArrowRightLeft size={20} style={{ color: '#10b981' }} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)' }}>Transfer Stock</h3>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Move spices between shops</p>
+              </div>
+            </div>
+
+            {/* From / To */}
+            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>From</label>
+                <select value={tfFrom} onChange={e => { setTfFrom(e.target.value); if (e.target.value === tfTo) setTfTo(SHOPS.find(s => s !== e.target.value) || SHOPS[0]); }} className="input-field" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem' }}>
+                  {SHOPS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: '0.6rem' }}>
+                <ArrowRightLeft size={16} style={{ color: 'var(--text-secondary)' }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>To</label>
+                <select value={tfTo} onChange={e => setTfTo(e.target.value)} className="input-field" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem' }}>
+                  {SHOPS.filter(s => s !== tfFrom).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Spice */}
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Spice</label>
+            <select value={tfSpice} onChange={e => { setTfSpice(e.target.value); setTfQty(''); }} className="input-field" style={{ marginBottom: '1rem', padding: '0.6rem 0.75rem', fontSize: '0.85rem' }}>
+              {SPICES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+
+            {/* Available stock info */}
+            <div style={{
+              background: 'rgba(88,166,255,0.08)', border: '1px solid rgba(88,166,255,0.15)',
+              borderRadius: 10, padding: '0.65rem 0.9rem', marginBottom: '1rem',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Available at {tfFrom}</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary-accent)' }}>
+                  {tfAvailableQty.toFixed(2)} <span style={{ fontSize: '0.7rem', fontWeight: 400 }}>Kg</span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Avg Buy Price</div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>₹{tfAvgPrice}/Kg</div>
+              </div>
+            </div>
+
+            {/* Quantity */}
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Quantity (Kg)</label>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                max={tfAvailableQty}
+                value={tfQty}
+                onChange={e => setTfQty(e.target.value)}
+                placeholder="Enter quantity..."
+                className="input-field"
+                style={{ flex: 1, padding: '0.65rem 0.85rem', fontSize: '1rem', fontWeight: 600 }}
+              />
+              <button
+                onClick={() => setTfQty(tfAvailableQty.toFixed(2))}
+                style={{
+                  padding: '0.5rem 0.75rem', borderRadius: 10,
+                  border: '1px solid rgba(88,166,255,0.3)',
+                  background: 'rgba(88,166,255,0.1)',
+                  color: 'var(--primary-accent)',
+                  fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                All
+              </button>
+            </div>
+
+            {/* Transfer value preview */}
+            {tfQty && parseFloat(tfQty) > 0 && (
+              <div style={{
+                padding: '0.6rem 0.75rem', marginBottom: '0.75rem',
+                background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+                borderRadius: 8, fontSize: '0.8rem', color: '#10b981',
+                display: 'flex', justifyContent: 'space-between',
+              }}>
+                <span>Transfer Value</span>
+                <span style={{ fontWeight: 700 }}>₹{(parseFloat(tfQty) * tfAvgPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
+
+            {/* Validation message */}
+            {tfQty && parseFloat(tfQty) > tfAvailableQty && (
+              <div style={{
+                padding: '0.5rem 0.75rem', marginBottom: '0.75rem',
+                background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)',
+                borderRadius: 8, fontSize: '0.75rem', color: 'var(--danger)',
+              }}>
+                Exceeds available stock ({tfAvailableQty.toFixed(2)} Kg)
+              </div>
+            )}
+
+            {/* Buttons */}
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button
+                onClick={() => setTransferModal(false)}
+                style={{
+                  flex: 1, padding: '0.7rem',
+                  borderRadius: 10, border: '1px solid var(--border-color)',
+                  background: 'transparent', color: 'var(--text-secondary)',
+                  fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTransfer}
+                disabled={!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || tfFrom === tfTo}
+                style={{
+                  flex: 1, padding: '0.7rem',
+                  borderRadius: 10, border: 'none',
+                  background: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty) ? 'rgba(16,185,129,0.3)' : '#10b981',
+                  color: '#fff',
+                  fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
+                  opacity: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty) ? 0.5 : 1,
+                  transition: 'all 0.15s ease',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                }}
+              >
+                <ArrowRightLeft size={16} />
+                Transfer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
 // COMPONENTS
-function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch }) {
+function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer }) {
   const [showOverallAvg, setShowOverallAvg] = useState(false);
 
   return (
@@ -461,22 +719,40 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
             <p className="subtitle">Current Load ({days} {days === 1 ? 'day' : 'days'})</p>
           </div>
         </div>
-        <button
-          onClick={() => setShowOverallAvg(v => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            background: showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.15)',
-            border: '1px solid rgba(59,130,246,0.4)',
-            borderRadius: '20px',
-            padding: '0.4rem 0.85rem',
-            color: showOverallAvg ? '#fff' : 'var(--primary-accent)',
-            fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-            transition: 'all 0.2s ease',
-          }}
-        >
-          <TrendingUp size={14} />
-          Overall Avg
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={onTransfer}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36,
+              background: 'rgba(16,185,129,0.12)',
+              border: '1px solid rgba(16,185,129,0.3)',
+              borderRadius: 12,
+              color: '#10b981',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            title="Transfer Stock"
+          >
+            <ArrowRightLeft size={18} />
+          </button>
+          <button
+            onClick={() => setShowOverallAvg(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
+              background: showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.15)',
+              border: '1px solid rgba(59,130,246,0.4)',
+              borderRadius: '20px',
+              padding: '0.4rem 0.85rem',
+              color: showOverallAvg ? '#fff' : 'var(--primary-accent)',
+              fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <TrendingUp size={14} />
+            Overall Avg
+          </button>
+        </div>
       </div>
 
       {/* ── Combined Average (All 3 Branches) — toggleable ── */}
