@@ -287,7 +287,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
       <div className="header-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <img src="/kvs-logo.png" alt="KVS" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'contain' }} />
+          <img src="/kvs-logo.png" alt="KVS" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'contain' }} />
           <div>
             <h1 className="title">KVS Spices</h1>
             <p className="subtitle">Current Load ({days} {days === 1 ? 'day' : 'days'})</p>
@@ -727,12 +727,27 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
 
-  const generatePDF = () => {
+  const generatePDF = async () => {
+    // ── Pre-load logo as base64 ──
+    let logoBase64 = null;
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = '/kvs-logo.png';
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      logoBase64 = canvas.toDataURL('image/png');
+    } catch (e) { /* logo not available, continue without it */ }
+
     const doc = new jsPDF('p', 'mm', 'a4');
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 14;
     let y = 12;
+    let pageNum = 1; // track current page to avoid re-drawing bg on page 1
 
     // ── Colors ──
     const dark = [13, 17, 23];
@@ -753,8 +768,16 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     // Helper: draw decorative top stripe
     const drawTopStripe = () => {
-      const grd = doc.setFillColor(...brandGreen);
+      doc.setFillColor(...brandGreen);
       doc.rect(0, 0, pageW, 3, 'F');
+    };
+
+    // Helper: new-page bg (only for pages AFTER the first)
+    const drawNewPageBg = (data) => {
+      if (data.pageNumber > 1) {
+        drawPageBg();
+        drawTopStripe();
+      }
     };
 
     // Helper: section title with accent bar
@@ -768,6 +791,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       return startY + 14;
     };
 
+    // ── Page 1 background ──
     drawPageBg();
     drawTopStripe();
 
@@ -775,20 +799,19 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     doc.setFillColor(...cardBg);
     doc.roundedRect(margin, y + 4, pageW - margin * 2, 30, 5, 5, 'F');
 
-    // Add logo
-    try {
-      const logoImg = new Image();
-      logoImg.src = '/kvs-logo.png';
-      doc.addImage(logoImg, 'PNG', margin + 5, y + 7, 24, 24);
-    } catch (e) { /* logo not available */ }
+    // Add logo (pre-loaded base64)
+    if (logoBase64) {
+      try { doc.addImage(logoBase64, 'PNG', margin + 5, y + 7, 24, 24); } catch (e) { /* skip */ }
+    }
 
+    const logoOffset = logoBase64 ? 33 : 6;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(18);
     doc.setTextColor(...brandGreen);
-    doc.text('KVS Spices & Traders', margin + 33, y + 17);
+    doc.text('KVS Spices & Traders', margin + logoOffset, y + 17);
     doc.setFontSize(9);
     doc.setTextColor(...grey);
-    doc.text(selectedShop, margin + 33, y + 25);
+    doc.text(selectedShop, margin + logoOffset, y + 25);
 
     doc.setFontSize(8);
     doc.setTextColor(...grey);
@@ -852,9 +875,9 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
           6: { halign: 'right', fontStyle: 'bold' }, 7: { halign: 'right', fontStyle: 'bold' },
         },
         margin: { left: margin, right: margin },
+        didDrawPage: drawNewPageBg,
         didParseCell: (data) => {
           if (data.section === 'body') {
-            // Format currency columns
             if (data.column.index === 2 || data.column.index === 4) {
               const v = data.cell.raw;
               if (v && v !== '-') data.cell.text = [`₹${v}`];
@@ -862,7 +885,6 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
             if (data.column.index === 6) {
               data.cell.text = [`₹${data.cell.raw}`];
             }
-            // Color P&L
             if (data.column.index === 7) {
               const v = data.cell.raw;
               if (v && v !== '-') {
@@ -892,10 +914,12 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const totalRemainingValue = totals.totalBuyValue - totals.totalSellValue;
     const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
 
+    // Check if totals card fits on current page
+    if (y > pageH - 40) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+
     // Totals card
     doc.setFillColor(18, 24, 33);
     doc.roundedRect(margin, y, pageW - margin * 2, 26, 4, 4, 'F');
-    // Top green accent line on card
     doc.setFillColor(...brandGreen);
     doc.rect(margin, y, pageW - margin * 2, 1.5, 'F');
 
@@ -947,7 +971,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         alternateRowStyles: { fillColor: [18, 22, 30] },
         columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold', textColor: white } },
         margin: { left: margin, right: margin },
-        didDrawPage: () => { drawPageBg(); drawTopStripe(); },
+        didDrawPage: drawNewPageBg,
       });
       y = doc.lastAutoTable.finalY + 8;
     }
@@ -978,7 +1002,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         alternateRowStyles: { fillColor: [18, 22, 30] },
         columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold', textColor: green } },
         margin: { left: margin, right: margin },
-        didDrawPage: () => { drawPageBg(); drawTopStripe(); },
+        didDrawPage: drawNewPageBg,
       });
       y = doc.lastAutoTable.finalY + 8;
     }
@@ -987,7 +1011,6 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const totalPages = doc.internal.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
-      // Footer bar
       doc.setFillColor(18, 22, 28);
       doc.rect(0, pageH - 10, pageW, 10, 'F');
       doc.setFillColor(...brandGreen);
