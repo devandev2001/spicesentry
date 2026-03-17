@@ -835,64 +835,66 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {/* Refresh button */}
-          <button
-            onClick={onRefresh}
-            disabled={syncing}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 36, height: 36,
-              background: syncing ? 'rgba(88,166,255,0.2)' : 'rgba(88,166,255,0.12)',
-              border: '1px solid rgba(88,166,255,0.3)',
-              borderRadius: 12,
-              color: '#58a6ff',
-              cursor: syncing ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s ease',
-              animation: syncing ? 'spin 1s linear infinite' : 'none',
-            }}
-            title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh from Google Sheets'}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-            </svg>
-          </button>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          <button
-            onClick={onTransfer}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              background: 'rgba(16,185,129,0.12)',
-              border: '1px solid rgba(16,185,129,0.3)',
-              borderRadius: 20,
-              padding: '0.4rem 0.85rem',
-              color: '#10b981',
-              fontSize: '0.75rem', fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-            }}
-            title="Transfer Stock"
-          >
-            <ArrowRightLeft size={14} />
-            Transfer
-          </button>
-          <button
-            onClick={() => setShowOverallAvg(v => !v)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              background: showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.15)',
-              border: '1px solid rgba(59,130,246,0.4)',
-              borderRadius: '20px',
-              padding: '0.4rem 0.85rem',
-              color: showOverallAvg ? '#fff' : 'var(--primary-accent)',
-              fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <TrendingUp size={14} />
-            Overall Avg
-          </button>
-        </div>
+        {/* Refresh button */}
+        <button
+          onClick={onRefresh}
+          disabled={syncing}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 36, height: 36,
+            background: syncing ? 'rgba(88,166,255,0.2)' : 'rgba(88,166,255,0.12)',
+            border: '1px solid rgba(88,166,255,0.3)',
+            borderRadius: 12,
+            color: '#58a6ff',
+            cursor: syncing ? 'not-allowed' : 'pointer',
+            transition: 'all 0.2s ease',
+            animation: syncing ? 'spin 1s linear infinite' : 'none',
+          }}
+          title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh from Google Sheets'}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          </svg>
+        </button>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+
+      {/* ── Action buttons — full-width row for mobile ── */}
+      <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem' }}>
+        <button
+          onClick={onTransfer}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+            padding: '0.7rem 1rem',
+            background: 'rgba(16,185,129,0.1)',
+            border: '1px solid rgba(16,185,129,0.3)',
+            borderRadius: 12,
+            color: '#10b981',
+            fontSize: '0.85rem', fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          <ArrowRightLeft size={18} />
+          Transfer Stock
+        </button>
+        <button
+          onClick={() => setShowOverallAvg(v => !v)}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+            padding: '0.7rem 1rem',
+            background: showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.1)',
+            border: `1px solid ${showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.3)'}`,
+            borderRadius: 12,
+            color: showOverallAvg ? '#fff' : 'var(--primary-accent)',
+            fontSize: '0.85rem', fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          <TrendingUp size={18} />
+          Overall Avg
+        </button>
       </div>
 
       {/* ── Combined Average (All 3 Branches) — toggleable ── */}
