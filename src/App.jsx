@@ -215,15 +215,67 @@ function App() {
     }
   };
 
-  const handleDispatchLoad = (spiceId) => {
+  const handleDispatchLoad = async (spiceId) => {
     const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
-    if (confirm(`Dispatch ${spiceLabel} from ${selectedShop}? This will reset only ${spiceLabel} data for this branch.`)) {
-      setShopLoads(prev => ({
-        ...prev,
-        [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
-      }));
-      setActiveTab('dashboard');
+    const load = getLoad(selectedShop, spiceId);
+    
+    // Calculate remaining qty
+    const spiceEntries = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spiceId);
+    const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spiceId);
+    const totalQty = spiceEntries.reduce((sum, e) => sum + Number(e.qty), 0);
+    const soldQty = spiceSales.reduce((sum, s) => sum + Number(s.qty), 0);
+    const remainingQty = Math.max(0, totalQty - soldQty);
+
+    if (remainingQty <= 0) {
+      if (confirm(`No remaining ${spiceLabel} stock. Reset load anyway?`)) {
+        setShopLoads(prev => ({
+          ...prev,
+          [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
+        }));
+      }
+      return;
     }
+
+    const priceStr = prompt(`Dispatch ${remainingQty.toFixed(2)} Kg of ${spiceLabel} from ${selectedShop}.\n\nEnter sell price per Kg (₹):`);
+    if (!priceStr) return;
+    const sellPrice = parseFloat(priceStr);
+    if (isNaN(sellPrice) || sellPrice <= 0) {
+      alert('Invalid price. Dispatch cancelled.');
+      return;
+    }
+
+    // Record as a sale
+    const dispatchSale = {
+      shop: selectedShop,
+      type: spiceId,
+      qty: remainingQty,
+      sellPrice,
+      buyerName: 'Dispatch',
+      id: Date.now(),
+      loadId: load.id,
+      totalValue: remainingQty * sellPrice,
+      kind: 'sale',
+      date: new Date().toISOString(),
+    };
+    setSales(prev => [dispatchSale, ...prev]);
+
+    // Send to Google Sheets
+    try {
+      await fetch(LOCAL_SALE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dispatchSale)
+      });
+    } catch (error) {
+      console.error("Error sending dispatch sale to Sheets:", error);
+    }
+
+    // Reset the load
+    setShopLoads(prev => ({
+      ...prev,
+      [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
+    }));
+    setActiveTab('dashboard');
   };
 
   return (
@@ -1026,6 +1078,186 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
   };
 
+  // ── Overall Report (all shops) ──
+  const generateOverallPDF = async () => {
+    let logoBase64 = null;
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = '/kvs-logo.png';
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      logoBase64 = canvas.toDataURL('image/png');
+    } catch (e) { /* skip */ }
+
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    let y = 12;
+
+    const dark = [13, 17, 23];
+    const cardBg = [22, 27, 34];
+    const accent = [88, 166, 255];
+    const brandGreen = [76, 175, 80];
+    const green = [16, 185, 129];
+    const red = [248, 113, 113];
+    const grey = [140, 150, 165];
+    const white = [255, 255, 255];
+    const lightGrey = [210, 215, 225];
+    const R = (val) => `Rs.${val}`;
+
+    const drawPageBg = () => { doc.setFillColor(...dark); doc.rect(0, 0, pageW, pageH, 'F'); };
+    const drawTopStripe = () => { doc.setFillColor(...brandGreen); doc.rect(0, 0, pageW, 3, 'F'); };
+    const drawNewPageBg = (data) => { if (data.pageNumber > 1) { drawPageBg(); drawTopStripe(); } };
+    const sectionTitle = (title, startY, color = accent) => {
+      doc.setFillColor(...color);
+      doc.rect(margin, startY, 3, 10, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(...white);
+      doc.text(title, margin + 7, startY + 7);
+      return startY + 14;
+    };
+
+    drawPageBg();
+    drawTopStripe();
+
+    // Header
+    doc.setFillColor(...cardBg);
+    doc.roundedRect(margin, y + 4, pageW - margin * 2, 30, 5, 5, 'F');
+    if (logoBase64) { try { doc.addImage(logoBase64, 'PNG', margin + 5, y + 7, 24, 24); } catch (e) {} }
+    const logoOffset = logoBase64 ? 33 : 6;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.setTextColor(...brandGreen);
+    doc.text('KVS Spices & Traders', margin + logoOffset, y + 17);
+    doc.setFontSize(9);
+    doc.setTextColor(...grey);
+    doc.text('All Branches - Overall Report', margin + logoOffset, y + 25);
+    doc.setFontSize(8);
+    doc.text(format(new Date(), 'MMMM d, yyyy \'at\' h:mm a'), pageW - margin - 5, y + 17, { align: 'right' });
+    y += 40;
+
+    doc.setDrawColor(40, 50, 65);
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, pageW - margin, y);
+    y += 6;
+
+    // ── Per-shop sections ──
+    for (const shop of shops) {
+      if (y > pageH - 60) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+      y = sectionTitle(shop, y, brandGreen);
+
+      const shopSummary = spices.map(spice => {
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id);
+        const totalQty = se.reduce((s, e) => s + Number(e.qty), 0);
+        const totalBuyValue = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        const soldQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+        const soldValue = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        const remainingQty = Math.max(0, totalQty - soldQty);
+        const remainingValue = totalBuyValue - soldValue;
+        const avgBuy = remainingQty > 0 ? (remainingValue / remainingQty).toFixed(2) : (totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00');
+        const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
+        const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty).toFixed(2) : '-';
+        return [spice.label, totalQty.toFixed(2), avgBuy, soldQty.toFixed(2), avgSell, remainingQty.toFixed(2),
+          remainingValue > 0 ? Math.round(remainingValue).toLocaleString('en-IN') : '0', profit];
+      }).filter(row => Number(row[1]) > 0 || Number(row[3]) > 0);
+
+      if (shopSummary.length > 0) {
+        autoTable(doc, {
+          startY: y,
+          head: [['Spice', 'Bought', 'Buy Avg', 'Sold', 'Sell Avg', 'Balance', 'Value', 'P&L']],
+          body: shopSummary,
+          theme: 'plain',
+          styles: { font: 'helvetica', fontSize: 7.5, textColor: lightGrey, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 }, lineWidth: 0 },
+          headStyles: { fillColor: [30, 38, 50], textColor: brandGreen, fontStyle: 'bold', fontSize: 7 },
+          alternateRowStyles: { fillColor: [18, 22, 30] },
+          columnStyles: {
+            0: { fontStyle: 'bold', textColor: white },
+            2: { halign: 'right' }, 4: { halign: 'right' },
+            6: { halign: 'right', fontStyle: 'bold' }, 7: { halign: 'right', fontStyle: 'bold' },
+          },
+          margin: { left: margin, right: margin },
+          didDrawPage: drawNewPageBg,
+          didParseCell: (data) => {
+            if (data.section === 'body') {
+              if (data.column.index === 2 || data.column.index === 4) { const v = data.cell.raw; if (v && v !== '-') data.cell.text = [R(v)]; }
+              if (data.column.index === 6) data.cell.text = [R(data.cell.raw)];
+              if (data.column.index === 7) { const v = data.cell.raw; if (v && v !== '-') { const num = parseFloat(v); data.cell.styles.textColor = num >= 0 ? green : red; data.cell.text = [`${num >= 0 ? '+' : ''}${R(Math.round(num).toLocaleString('en-IN'))}`]; } }
+            }
+          },
+        });
+        y = doc.lastAutoTable.finalY + 6;
+      } else {
+        doc.setFontSize(8);
+        doc.setTextColor(...grey);
+        doc.text('No records', margin + 7, y);
+        y += 8;
+      }
+    }
+
+    // ── Grand Total across all shops ──
+    if (y > pageH - 45) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+    y += 4;
+    const grandTotals = { bought: 0, buyValue: 0, sold: 0, sellValue: 0 };
+    shops.forEach(shop => {
+      spices.forEach(spice => {
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id);
+        grandTotals.buyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        grandTotals.sellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        grandTotals.bought += se.reduce((s, e) => s + Number(e.qty), 0);
+        grandTotals.sold += ss.reduce((s, e) => s + Number(e.qty), 0);
+      });
+    });
+    const gRemVal = grandTotals.buyValue - grandTotals.sellValue;
+    const gProfit = grandTotals.sellValue - (grandTotals.bought > 0 ? (grandTotals.buyValue / grandTotals.bought) * grandTotals.sold : 0);
+
+    doc.setFillColor(18, 24, 33);
+    doc.roundedRect(margin, y, pageW - margin * 2, 26, 4, 4, 'F');
+    doc.setFillColor(...brandGreen);
+    doc.rect(margin, y, pageW - margin * 2, 1.5, 'F');
+
+    const colW = (pageW - margin * 2) / 4;
+    const gLabels = ['Total Invested', 'Total Sold', 'Remaining Value', 'Net Profit'];
+    const gValues = [
+      R(Math.round(grandTotals.buyValue).toLocaleString('en-IN')),
+      R(Math.round(grandTotals.sellValue).toLocaleString('en-IN')),
+      R(Math.round(gRemVal).toLocaleString('en-IN')),
+      `${gProfit >= 0 ? '+' : ''}${R(Math.round(gProfit).toLocaleString('en-IN'))}`,
+    ];
+    const gColors = [white, accent, white, gProfit >= 0 ? green : red];
+    gLabels.forEach((label, i) => {
+      const x = margin + colW * i + 6;
+      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(...grey);
+      doc.text(label, x, y + 9);
+      doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...gColors[i]);
+      doc.text(gValues[i], x, y + 19);
+    });
+
+    // Footer
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFillColor(18, 22, 28);
+      doc.rect(0, pageH - 10, pageW, 10, 'F');
+      doc.setFillColor(...brandGreen);
+      doc.rect(0, pageH - 10, pageW, 0.5, 'F');
+      doc.setFontSize(6.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...grey);
+      doc.text('KVS Spices & Traders  •  Overall Report  •  SpiceSentry', margin, pageH - 4);
+      doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
+    }
+
+    doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  };
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
       <h1 className="title">History</h1>
@@ -1043,10 +1275,14 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         ))}
       </div>
 
-      <div className="glass-card" style={{ marginBottom: '1.5rem' }}>
+      <div className="glass-card" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <button className="btn btn-primary" style={{ background: 'var(--primary-accent)' }} onClick={generatePDF}>
           <Download size={20} />
           Download {selectedShop} Report
+        </button>
+        <button className="btn btn-primary" style={{ background: 'rgba(76,175,80,0.9)' }} onClick={generateOverallPDF}>
+          <Download size={20} />
+          Download Overall Report (All Shops)
         </button>
       </div>
 
