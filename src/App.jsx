@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 const SHOPS = ['KVS Anachal', '20 Acre', 'Kallar'];
 const SPICES = [
@@ -776,7 +776,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }).filter(row => Number(row[1]) > 0 || Number(row[3]) > 0);
 
     if (summaryData.length > 0) {
-      doc.autoTable({
+      autoTable(doc, {
         startY: y,
         head: [['Spice', 'Bought Kg', 'Buy Avg', 'Sold Kg', 'Sell Avg', 'Balance Kg', 'Stock Value', 'Profit']],
         body: summaryData,
@@ -887,7 +887,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         `₹${(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')}`,
       ]);
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: y,
         head: [['Date', 'Spice', 'Qty', 'Price/Kg', 'Total']],
         body: purchaseRows,
@@ -939,7 +939,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         s.buyerName || '-',
       ]);
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: y,
         head: [['Date', 'Spice', 'Qty', 'Sell/Kg', 'Total', 'Buyer']],
         body: saleRows,
