@@ -201,13 +201,13 @@ function App() {
     }
   };
 
-  const handleDispatchLoad = (spiceId) => {
-    const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
-    if (confirm(`Dispatch ${spiceLabel} from ${selectedShop}? This will reset only ${spiceLabel} data for this branch.`)) {
-      setShopLoads(prev => ({
-        ...prev,
-        [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
-      }));
+  const handleDispatchLoad = () => {
+    if (confirm(`Dispatch all spices from ${selectedShop}? This will reset all data for this branch.`)) {
+      const newLoads = { ...shopLoads };
+      SPICES.forEach(spice => {
+        newLoads[`${selectedShop}|${spice.id}`] = { id: Date.now().toString(), start: Date.now() };
+      });
+      setShopLoads(newLoads);
       setActiveTab('dashboard');
     }
   };
@@ -342,23 +342,13 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           <div key={spice.id} className="glass-card" style={{ borderLeft: `4px solid ${spice.color}`, padding: '0.75rem' }}>
             <p className="subtitle" style={{ fontSize: '0.7rem' }}>{spice.label}</p>
 
-            {/* Original buy avg (weighted avg of all purchases) */}
+            {/* Buy avg (cost-relief adjusted) */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.4rem' }}>
               <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Buy Avg</span>
               <span style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color }}>
-                ₹{spice.originalAvgBuy} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
+                ₹{spice.avgBuyPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
               </span>
             </div>
-
-            {/* Cost-relief adjusted avg — only show when sales exist and it differs */}
-            {spice.soldQty > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.25rem' }}>
-                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Adj. Avg</span>
-                <span style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.avgBuyPrice < spice.originalAvgBuy ? '#10b981' : spice.avgBuyPrice > spice.originalAvgBuy ? 'var(--danger)' : spice.color }}>
-                  ₹{spice.avgBuyPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
-                </span>
-              </div>
-            )}
 
             {/* Sell avg — only shown when there are sales */}
             {spice.avgSellPrice !== null && (
@@ -416,35 +406,19 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                 sold {spice.soldQty.toFixed(2)} Kg
               </p>
             )}
-            {spice.totalQty > 0 && (
-              <button
-                onClick={() => onDispatch(spice.id)}
-                style={{
-                  marginTop: '0.5rem',
-                  width: '100%',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
-                  padding: '0.35rem 0.5rem',
-                  borderRadius: 8,
-                  border: '1px solid rgba(248,113,113,0.3)',
-                  background: 'rgba(248,113,113,0.08)',
-                  color: 'var(--danger)',
-                  fontSize: '0.65rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                <Truck size={12} />
-                Dispatch
-              </button>
-            )}
           </div>
         ))}
       </div>
 
-      <p className="subtitle" style={{ fontSize: '0.7rem', textAlign: 'center', marginTop: '0.75rem' }}>
-        Dispatching resets data only for that spice in {selectedShop}.
-      </p>
+      <div className="glass-card" style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <button className="btn btn-danger" onClick={onDispatch}>
+          <Truck size={20} />
+          Dispatch {selectedShop} Load
+        </button>
+        <p className="subtitle" style={{ fontSize: '0.75rem', textAlign: 'center' }}>
+          Dispatching resets all spice data for {selectedShop}.
+        </p>
+      </div>
     </div>
   );
 }

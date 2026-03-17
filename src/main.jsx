@@ -5,7 +5,7 @@ import App from './App.jsx'
 
 // ── Version-based hard refresh ──
 // Bump this string every time you deploy so returning users auto-reload.
-const APP_VERSION = '2026.03.17.2';
+const APP_VERSION = '2026.03.17.3';
 
 (function checkVersion() {
   const stored = localStorage.getItem('spicesentry_version');
