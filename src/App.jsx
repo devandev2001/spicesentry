@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft } from 'lucide-react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -116,7 +116,7 @@ function App() {
   // ── Fetch on mount + auto-poll every 3s ──
   useEffect(() => {
     refreshFromSheets();
-    const interval = setInterval(() => refreshFromSheets(true), 3000);
+    const interval = setInterval(() => refreshFromSheets(true), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -1369,7 +1369,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
 
-  const generatePDF = async () => {
+  const generatePDF = async (mode = 'download') => {
     // ── Pre-load logo as base64 ──
     let logoBase64 = null;
     try {
@@ -1683,11 +1683,17 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
     }
 
-    doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+    if (mode === 'view') {
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } else {
+      doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+    }
   };
 
   // ── Overall Report (all shops) ──
-  const generateOverallPDF = async () => {
+  const generateOverallPDF = async (mode = 'download') => {
     let logoBase64 = null;
     try {
       const img = new Image();
@@ -1863,7 +1869,13 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
     }
 
-    doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+    if (mode === 'view') {
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } else {
+      doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+    }
   };
 
   return (
@@ -1959,14 +1971,26 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       </div>
 
       <div className="glass-card history-buttons-row" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <button className="btn btn-primary" style={{ background: 'var(--primary-accent)' }} onClick={generatePDF}>
-          <Download size={20} />
-          Download {selectedShop} Report {(dateFrom || dateTo) ? '(Filtered)' : ''}
-        </button>
-        <button className="btn btn-primary" style={{ background: 'rgba(76,175,80,0.9)' }} onClick={generateOverallPDF}>
-          <Download size={20} />
-          Download Overall Report (All Shops)
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)' }} onClick={() => generatePDF('view')}>
+            <Eye size={18} />
+            View {selectedShop} {(dateFrom || dateTo) ? '(Filtered)' : ''}
+          </button>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)', opacity: 0.8 }} onClick={() => generatePDF('download')}>
+            <Download size={18} />
+            Download
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)' }} onClick={() => generateOverallPDF('view')}>
+            <Eye size={18} />
+            View Overall (All Shops)
+          </button>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)', opacity: 0.8 }} onClick={() => generateOverallPDF('download')}>
+            <Download size={18} />
+            Download
+          </button>
+        </div>
       </div>
 
       <h2 className="title" style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>
