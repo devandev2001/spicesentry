@@ -853,6 +853,12 @@ function App() {
 // COMPONENTS
 function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh }) {
   const [showOverallAvg, setShowOverallAvg] = useState(false);
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
@@ -862,7 +868,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           <div>
             <h1 className="title">KVS Spices</h1>
             <p className="subtitle" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              Current Load ({days} {days === 1 ? 'day' : 'days'})
+              {format(now, 'dd MMM yyyy, hh:mm:ss a')}
               {syncing && <span style={{ fontSize: '0.6rem', color: 'var(--primary-accent)', marginLeft: 4 }}>⟳ syncing…</span>}
             </p>
           </div>
