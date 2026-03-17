@@ -861,18 +861,20 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           <button
             onClick={onTransfer}
             style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 36, height: 36,
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
               background: 'rgba(16,185,129,0.12)',
               border: '1px solid rgba(16,185,129,0.3)',
-              borderRadius: 12,
+              borderRadius: 20,
+              padding: '0.4rem 0.85rem',
               color: '#10b981',
+              fontSize: '0.75rem', fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.2s ease',
             }}
             title="Transfer Stock"
           >
-            <ArrowRightLeft size={18} />
+            <ArrowRightLeft size={14} />
+            Transfer
           </button>
           <button
             onClick={() => setShowOverallAvg(v => !v)}
