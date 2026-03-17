@@ -24,7 +24,7 @@ const SPREADSHEET_ID = '1H_4Br3r1RePxAahV4RixHzsmVjSHqhQuT4JG-mXhPe8';
 
 app.post('/api/add-entry', async (req, res) => {
   try {
-    const { date, type, qty, price, totalValue, loadId, id } = req.body;
+    const { date, type, qty, price, totalValue, loadId, id, shop } = req.body;
     
     // Format the incoming date string to match sheets
     const formattedDate = new Date(date).toLocaleString('en-IN', {
@@ -40,12 +40,12 @@ app.post('/api/add-entry', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'Sheet1!A:G', // Appends to the first empty row in columns A through G
+      range: 'Sheet1!A:H', // Appends to the first empty row in columns A through H
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
         values: [
-          [formattedDate, type, qty, price, totalValue, loadId, id]
+          [formattedDate, type, qty, price, totalValue, loadId, id, shop]
         ],
       },
     });
