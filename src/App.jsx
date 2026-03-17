@@ -45,8 +45,8 @@ function App() {
     let cancelled = false;
     async function fetchFromSheets() {
       try {
-        const res = await fetch(GSHEET_URL);
-        if (!res.ok) throw new Error('Network error');
+        const res = await fetch(GSHEET_URL, { redirect: 'follow' });
+        if (!res.ok) throw new Error('Network error ' + res.status);
         const data = await res.json();
         if (cancelled) return;
 
