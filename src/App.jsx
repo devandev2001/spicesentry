@@ -826,13 +826,15 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     doc.line(margin, y, pageW - margin, y);
     y += 6;
 
+    // ── Rupee helper (Helvetica doesn't have ₹) ──
+    const R = (val) => `Rs.${val}`;
+
     // ── Stock Summary ──
     y = sectionTitle('Stock Summary', y);
 
     const summaryData = spices.map(spice => {
-      const load = getLoad(selectedShop, spice.id);
-      const spiceEntries = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spice.id);
-      const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spice.id);
+      const spiceEntries = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
+      const spiceSales = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
       const totalQty = spiceEntries.reduce((s, e) => s + Number(e.qty), 0);
       const totalBuyValue = spiceEntries.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
       const soldQty = spiceSales.reduce((s, e) => s + Number(e.qty), 0);
@@ -880,17 +882,17 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
           if (data.section === 'body') {
             if (data.column.index === 2 || data.column.index === 4) {
               const v = data.cell.raw;
-              if (v && v !== '-') data.cell.text = [`₹${v}`];
+              if (v && v !== '-') data.cell.text = [R(v)];
             }
             if (data.column.index === 6) {
-              data.cell.text = [`₹${data.cell.raw}`];
+              data.cell.text = [R(data.cell.raw)];
             }
             if (data.column.index === 7) {
               const v = data.cell.raw;
               if (v && v !== '-') {
                 const num = parseFloat(v);
                 data.cell.styles.textColor = num >= 0 ? green : red;
-                data.cell.text = [`${num >= 0 ? '+' : ''}₹${Math.round(num).toLocaleString('en-IN')}`];
+                data.cell.text = [`${num >= 0 ? '+' : ''}${R(Math.round(num).toLocaleString('en-IN'))}`];
               }
             }
           }
@@ -901,9 +903,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     // ── Grand Totals Card ──
     const totals = spices.reduce((acc, spice) => {
-      const load = getLoad(selectedShop, spice.id);
-      const se = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spice.id);
-      const ss = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spice.id);
+      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
+      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
       acc.totalBuyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
       acc.totalSellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
       acc.totalBought += se.reduce((s, e) => s + Number(e.qty), 0);
@@ -926,10 +927,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const colW = (pageW - margin * 2) / 4;
     const labels = ['Total Invested', 'Total Sold', 'Remaining Value', 'Net Profit'];
     const values = [
-      `₹${Math.round(totals.totalBuyValue).toLocaleString('en-IN')}`,
-      `₹${Math.round(totals.totalSellValue).toLocaleString('en-IN')}`,
-      `₹${Math.round(totalRemainingValue).toLocaleString('en-IN')}`,
-      `${totalProfit >= 0 ? '+' : ''}₹${Math.round(totalProfit).toLocaleString('en-IN')}`,
+      R(Math.round(totals.totalBuyValue).toLocaleString('en-IN')),
+      R(Math.round(totals.totalSellValue).toLocaleString('en-IN')),
+      R(Math.round(totalRemainingValue).toLocaleString('en-IN')),
+      `${totalProfit >= 0 ? '+' : ''}${R(Math.round(totalProfit).toLocaleString('en-IN'))}`,
     ];
     const valColors = [white, accent, white, totalProfit >= 0 ? green : red];
 
@@ -957,8 +958,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         format(new Date(e.date), 'dd MMM yy'),
         e.type.replace('_', ' '),
         `${Number(e.qty).toFixed(2)} Kg`,
-        `₹${Number(e.price).toLocaleString('en-IN')}`,
-        `₹${Math.round(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')}`,
+        R(Number(e.price).toLocaleString('en-IN')),
+        R(Math.round(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')),
       ]);
 
       autoTable(doc, {
@@ -987,8 +988,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         format(new Date(s.date), 'dd MMM yy'),
         s.type.replace('_', ' '),
         `${Number(s.qty).toFixed(2)} Kg`,
-        `₹${Number(s.sellPrice).toLocaleString('en-IN')}`,
-        `₹${Math.round(Number(s.qty) * Number(s.sellPrice)).toLocaleString('en-IN')}`,
+        R(Number(s.sellPrice).toLocaleString('en-IN')),
+        R(Math.round(Number(s.qty) * Number(s.sellPrice)).toLocaleString('en-IN')),
         s.buyerName || '-',
       ]);
 
