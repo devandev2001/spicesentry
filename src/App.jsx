@@ -201,13 +201,13 @@ function App() {
     }
   };
 
-  const handleDispatchLoad = () => {
-    if (confirm(`Dispatch all spices from ${selectedShop}? This will reset all data for this branch.`)) {
-      const newLoads = { ...shopLoads };
-      SPICES.forEach(spice => {
-        newLoads[`${selectedShop}|${spice.id}`] = { id: Date.now().toString(), start: Date.now() };
-      });
-      setShopLoads(newLoads);
+  const handleDispatchLoad = (spiceId) => {
+    const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
+    if (confirm(`Dispatch ${spiceLabel} from ${selectedShop}? This will reset only ${spiceLabel} data for this branch.`)) {
+      setShopLoads(prev => ({
+        ...prev,
+        [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
+      }));
       setActiveTab('dashboard');
     }
   };
@@ -406,18 +406,30 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                 sold {spice.soldQty.toFixed(2)} Kg
               </p>
             )}
+            {spice.totalQty > 0 && (
+              <button
+                onClick={() => onDispatch(spice.id)}
+                style={{
+                  marginTop: '0.5rem',
+                  width: '100%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
+                  padding: '0.35rem 0.5rem',
+                  borderRadius: 8,
+                  border: '1px solid rgba(248,113,113,0.3)',
+                  background: 'rgba(248,113,113,0.08)',
+                  color: 'var(--danger)',
+                  fontSize: '0.65rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Truck size={12} />
+                Dispatch
+              </button>
+            )}
           </div>
         ))}
-      </div>
-
-      <div className="glass-card" style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <button className="btn btn-danger" onClick={onDispatch}>
-          <Truck size={20} />
-          Dispatch {selectedShop} Load
-        </button>
-        <p className="subtitle" style={{ fontSize: '0.75rem', textAlign: 'center' }}>
-          Dispatching resets all spice data for {selectedShop}.
-        </p>
       </div>
     </div>
   );
