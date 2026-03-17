@@ -58,6 +58,34 @@ app.post('/api/add-entry', async (req, res) => {
   }
 });
 
+app.post('/api/add-sale', async (req, res) => {
+  try {
+    const { date, type, qty, sellPrice, totalValue, loadId, id, shop, buyerName } = req.body;
+
+    const formattedDate = new Date(date).toLocaleString('en-IN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    }).replace(',', '');
+
+    const response = await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'Sales!A:I',
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [[formattedDate, shop, type, qty, sellPrice, totalValue, loadId, id, buyerName || '']]
+      },
+    });
+
+    console.log(`Sale row inserted. Range: ${response.data.updates.updatedRange}`);
+    res.status(200).json({ success: true, message: 'Sale recorded!', data: response.data });
+  } catch (error) {
+    console.error('Error adding sale to Google Sheets:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Backend server running at http://localhost:${port}`);
 });
