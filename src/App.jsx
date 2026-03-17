@@ -48,7 +48,7 @@ function App() {
   const avgPepper = totalPepperQty > 0 ? (totalPepperValue / totalPepperQty).toFixed(2) : "0.00";
 
   // Replace this with your Google Apps Script Web App URL once you deploy it
-  const GOOGLE_SHEET_URL = 'YOUR_WEB_APP_URL_HERE';
+  const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbz9_P3ISNQqSpf0UXLSny8JhEnruz2rGSXmFfRF6HzaXgwZLGrMcBP5UTTZNuJJHFeb/exec';
 
   const handleAddEntry = async (entry) => {
     const newEntry = { ...entry, id: Date.now(), loadId: currentLoadId };
