@@ -62,24 +62,34 @@ function App() {
     const spiceEntries = shopEntries.filter(e => e.type === spice.id);
     const totalQty = spiceEntries.reduce((sum, e) => sum + Number(e.qty), 0);
     const totalValue = spiceEntries.reduce((sum, e) => sum + (Number(e.qty) * Number(e.price)), 0);
-    const avgBuyPrice = totalQty > 0 ? +(totalValue / totalQty).toFixed(2) : 0;
+    const originalAvgBuy = totalQty > 0 ? +(totalValue / totalQty).toFixed(2) : 0;
 
     // Sales for this shop + spice in the current load
     const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === currentShopLoad.id && s.type === spice.id);
     const soldQty   = spiceSales.reduce((sum, s) => sum + Number(s.qty), 0);
     const soldValue = spiceSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
     const avgSellPrice = soldQty > 0 ? +(soldValue / soldQty).toFixed(2) : null;
-    const profitPerKg  = avgSellPrice !== null ? +(avgSellPrice - avgBuyPrice).toFixed(2) : null;
+
+    const remainingQty = Math.max(0, totalQty - soldQty);
+
+    // Cost-relief method: remaining value = total buy value − sale proceeds
+    const remainingValue = totalValue - soldValue;
+    const avgBuyPrice = remainingQty > 0 ? +(remainingValue / remainingQty).toFixed(2) : originalAvgBuy;
+
+    const profitPerKg  = avgSellPrice !== null ? +(avgSellPrice - originalAvgBuy).toFixed(2) : null;
 
     return {
       ...spice,
       totalQty,
       soldQty,
-      remainingQty: Math.max(0, totalQty - soldQty),
-      avgPrice: avgBuyPrice.toFixed(2),   // keep string for display compat
-      avgBuyPrice,
+      remainingQty,
+      originalAvgBuy,                     // weighted avg of all purchases (never changes)
+      avgPrice: avgBuyPrice.toFixed(2),   // keep string for display compat — now cost-relief adjusted
+      avgBuyPrice,                        // cost-relief adjusted avg
       avgSellPrice,
       profitPerKg,
+      remainingValue: remainingQty > 0 ? +remainingValue.toFixed(2) : 0,
+      totalBuyValue: +totalValue.toFixed(2),
     };
   });
 
@@ -87,22 +97,33 @@ function App() {
   const allBranchStats = SPICES.map(spice => {
     let grandQty = 0;
     let grandValue = 0;
+    let grandSoldValue = 0;
+    let grandSoldQty = 0;
     const perShop = SHOPS.map(shop => {
       const load = shopLoads[shop] || { id: '0' };
       const se = entries.filter(e => e.shop === shop && e.loadId === load.id && e.type === spice.id);
       const qty = se.reduce((s, e) => s + Number(e.qty), 0);
       const val = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
-      const soldQty = sales
-        .filter(s => s.shop === shop && s.loadId === load.id && s.type === spice.id)
-        .reduce((sum, s) => sum + Number(s.qty), 0);
+      const shopSales = sales.filter(s => s.shop === shop && s.loadId === load.id && s.type === spice.id);
+      const soldQty = shopSales.reduce((sum, s) => sum + Number(s.qty), 0);
+      const soldVal = shopSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
+      const remainingQty = Math.max(0, qty - soldQty);
       grandQty += qty;
       grandValue += val;
-      return { shop, qty, soldQty, remainingQty: Math.max(0, qty - soldQty), avgPrice: qty > 0 ? +(val / qty).toFixed(2) : 0 };
+      grandSoldValue += soldVal;
+      grandSoldQty += soldQty;
+      // Cost-relief avg for this shop
+      const remainingValue = val - soldVal;
+      const costReliefAvg = remainingQty > 0 ? +(remainingValue / remainingQty).toFixed(2) : (qty > 0 ? +(val / qty).toFixed(2) : 0);
+      return { shop, qty, soldQty, remainingQty, avgPrice: costReliefAvg };
     });
+    const grandRemainingQty = Math.max(0, grandQty - grandSoldQty);
+    const grandRemainingValue = grandValue - grandSoldValue;
     return {
       ...spice,
       totalQty: grandQty,
-      avgPrice: grandQty > 0 ? +(grandValue / grandQty).toFixed(2) : 0,
+      remainingQty: grandRemainingQty,
+      avgPrice: grandRemainingQty > 0 ? +(grandRemainingValue / grandRemainingQty).toFixed(2) : (grandQty > 0 ? +(grandValue / grandQty).toFixed(2) : 0),
       perShop,
     };
   });
@@ -187,7 +208,7 @@ function App() {
           />
         )}
         {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
-        {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} stats={stats} selectedShop={selectedShop} />}
+        {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} />}
         {activeTab === 'history' && (
           <History 
             entries={entries}
@@ -302,19 +323,29 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           <div key={spice.id} className="glass-card" style={{ borderLeft: `4px solid ${spice.color}`, padding: '0.75rem' }}>
             <p className="subtitle" style={{ fontSize: '0.7rem' }}>{spice.label}</p>
 
-            {/* Buy avg */}
+            {/* Original buy avg (weighted avg of all purchases) */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.4rem' }}>
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Buy</span>
+              <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Buy Avg</span>
               <span style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color }}>
-                ₹{spice.avgBuyPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
+                ₹{spice.originalAvgBuy} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
               </span>
             </div>
+
+            {/* Cost-relief adjusted avg — only show when sales exist and it differs */}
+            {spice.soldQty > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.25rem' }}>
+                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Adj. Avg</span>
+                <span style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.avgBuyPrice < spice.originalAvgBuy ? '#10b981' : spice.avgBuyPrice > spice.originalAvgBuy ? 'var(--danger)' : spice.color }}>
+                  ₹{spice.avgBuyPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
+                </span>
+              </div>
+            )}
 
             {/* Sell avg — only shown when there are sales */}
             {spice.avgSellPrice !== null && (
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.25rem' }}>
-                  <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Sell</span>
+                  <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Sell Avg</span>
                   <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#10b981' }}>
                     ₹{spice.avgSellPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
                   </span>
@@ -336,6 +367,16 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                   </span>
                 </div>
               </>
+            )}
+
+            {/* Remaining stock value */}
+            {spice.remainingQty > 0 && spice.totalBuyValue > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Stock Value</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  ₹{spice.remainingValue.toLocaleString('en-IN')}
+                </span>
+              </div>
             )}
           </div>
         ))}
@@ -464,7 +505,7 @@ function AddEntry({ onAdd, shops, spices }) {
   );
 }
 
-function AddSale({ onSell, shops, spices, stats, selectedShop }) {
+function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedShop }) {
   const [shop, setShop] = useState(selectedShop || shops[0]);
   const [type, setType] = useState(spices[0].id);
   const [qty, setQty] = useState('');
@@ -472,19 +513,45 @@ function AddSale({ onSell, shops, spices, stats, selectedShop }) {
   const [buyerName, setBuyerName] = useState('');
 
   const selectedSpice = spices.find(s => s.id === type);
-  const spiceStat = stats.find(s => s.id === type);
-  const availableQty = spiceStat ? spiceStat.remainingQty : 0;
+
+  // Compute stock for the selected shop & spice dynamically
+  const currentLoad = shopLoads[shop] || { id: '0' };
+  const boughtQty = entries
+    .filter(e => e.shop === shop && e.loadId === currentLoad.id && e.type === type)
+    .reduce((sum, e) => sum + Number(e.qty), 0);
+  const boughtValue = entries
+    .filter(e => e.shop === shop && e.loadId === currentLoad.id && e.type === type)
+    .reduce((sum, e) => sum + Number(e.qty) * Number(e.price), 0);
+  const soldQty = sales
+    .filter(s => s.shop === shop && s.loadId === currentLoad.id && s.type === type)
+    .reduce((sum, s) => sum + Number(s.qty), 0);
+  const soldValue = sales
+    .filter(s => s.shop === shop && s.loadId === currentLoad.id && s.type === type)
+    .reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
+  const availableQty = Math.max(0, boughtQty - soldQty);
+
+  // Cost-relief method: remaining value = buy value − sale proceeds
+  const remainingValue = boughtValue - soldValue;
+  const avgBuyPrice = availableQty > 0 ? +(remainingValue / availableQty).toFixed(2) : (boughtQty > 0 ? +(boughtValue / boughtQty).toFixed(2) : 0);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!qty || !sellPrice) return alert('Please enter quantity and sell price.');
     if (parseFloat(qty) > availableQty) return alert(`Only ${availableQty.toFixed(2)} Kg available in ${shop}.`);
     onSell({ shop, type, qty: parseFloat(qty), sellPrice: parseFloat(sellPrice), buyerName });
+    setQty('');
+    setSellPrice('');
+    setBuyerName('');
   };
 
-  const profit = qty && sellPrice && spiceStat
-    ? ((parseFloat(sellPrice) - parseFloat(spiceStat.avgPrice)) * parseFloat(qty)).toFixed(2)
+  const profit = qty && sellPrice && avgBuyPrice > 0
+    ? ((parseFloat(sellPrice) - avgBuyPrice) * parseFloat(qty)).toFixed(2)
     : null;
+
+  // Preview: what will the new adjusted avg be after this sale?
+  const previewQty = qty ? availableQty - parseFloat(qty || 0) : 0;
+  const previewValue = qty && sellPrice ? remainingValue - (parseFloat(qty) * parseFloat(sellPrice)) : 0;
+  const previewAvg = previewQty > 0 ? +(previewValue / previewQty).toFixed(2) : null;
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
@@ -513,11 +580,25 @@ function AddSale({ onSell, shops, spices, stats, selectedShop }) {
       </div>
 
       {/* Available stock indicator */}
-      <div className="glass-card" style={{ padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="subtitle" style={{ fontSize: '0.8rem' }}>Available in {shop}</span>
-        <span style={{ fontWeight: 700, fontSize: '1rem', color: availableQty > 0 ? selectedSpice.color : 'var(--danger)' }}>
-          {availableQty.toFixed(2)} Kg
-        </span>
+      <div className="glass-card" style={{ padding: '0.75rem 1rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span className="subtitle" style={{ fontSize: '0.8rem' }}>Available in {shop}</span>
+          <span style={{ fontWeight: 700, fontSize: '1rem', color: availableQty > 0 ? selectedSpice.color : 'var(--danger)' }}>
+            {availableQty.toFixed(2)} Kg
+          </span>
+        </div>
+        {availableQty > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <span className="subtitle" style={{ fontSize: '0.7rem' }}>Current Avg Buy</span>
+            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>₹{avgBuyPrice}/Kg</span>
+          </div>
+        )}
+        {availableQty > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.2rem' }}>
+            <span className="subtitle" style={{ fontSize: '0.7rem' }}>Stock Value</span>
+            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>₹{remainingValue > 0 ? remainingValue.toLocaleString('en-IN') : '0'}</span>
+          </div>
+        )}
       </div>
 
       <form className="glass-card" onSubmit={handleSubmit}>
@@ -564,8 +645,22 @@ function AddSale({ onSell, shops, spices, stats, selectedShop }) {
             </div>
             {profit !== null && (
               <span style={{ fontSize: '0.78rem', fontWeight: 600, color: parseFloat(profit) >= 0 ? '#10b981' : 'var(--danger)' }}>
-                {parseFloat(profit) >= 0 ? '▲' : '▼'} ₹{Math.abs(profit)} {parseFloat(profit) >= 0 ? 'profit' : 'loss'} vs avg buy price
+                {parseFloat(profit) >= 0 ? '▲' : '▼'} ₹{Math.abs(parseFloat(profit)).toLocaleString('en-IN')} {parseFloat(profit) >= 0 ? 'profit' : 'loss'} vs current avg
               </span>
+            )}
+            {previewAvg !== null && qty && sellPrice && parseFloat(qty) > 0 && (
+              <div style={{ marginTop: '0.3rem', padding: '0.5rem 0.65rem', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>After sale: {previewQty.toFixed(2)} Kg left</span>
+                  <span style={{ fontWeight: 700, color: previewAvg < avgBuyPrice ? '#10b981' : previewAvg > avgBuyPrice ? 'var(--danger)' : 'var(--text-primary)' }}>
+                    Avg ₹{previewAvg}/Kg
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Stock value</span>
+                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>₹{previewValue > 0 ? Math.round(previewValue).toLocaleString('en-IN') : '0'}</span>
+                </div>
+              </div>
             )}
           </div>
         </div>
