@@ -804,7 +804,7 @@ function App() {
                 background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)',
                 borderRadius: 8, fontSize: '0.75rem', color: 'var(--danger)',
               }}>
-                Exceeds available stock ({tfAvailableQty.toFixed(2)} Kg)
+                ⚠️ Exceeds available stock ({tfAvailableQty.toFixed(2)} Kg)
               </div>
             )}
 
@@ -823,14 +823,14 @@ function App() {
               </button>
               <button
                 onClick={handleTransfer}
-                disabled={!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || tfFrom === tfTo || !tfPrice || parseFloat(tfPrice) <= 0}
+                disabled={!tfQty || parseFloat(tfQty) <= 0 || tfFrom === tfTo || !tfPrice || parseFloat(tfPrice) <= 0}
                 style={{
                   flex: 1, padding: '0.7rem',
                   borderRadius: 10, border: 'none',
-                  background: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || !tfPrice || parseFloat(tfPrice) <= 0) ? 'rgba(16,185,129,0.3)' : '#10b981',
+                  background: (!tfQty || parseFloat(tfQty) <= 0 || !tfPrice || parseFloat(tfPrice) <= 0) ? 'rgba(16,185,129,0.3)' : '#10b981',
                   color: '#fff',
                   fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
-                  opacity: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || !tfPrice || parseFloat(tfPrice) <= 0) ? 0.5 : 1,
+                  opacity: (!tfQty || parseFloat(tfQty) <= 0 || !tfPrice || parseFloat(tfPrice) <= 0) ? 0.5 : 1,
                   transition: 'all 0.15s ease',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
                 }}
