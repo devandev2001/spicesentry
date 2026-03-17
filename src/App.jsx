@@ -826,7 +826,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
       <div className="header-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <img src="/kvs-logo.png" alt="KVS" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'contain' }} />
+          <img src="/kvs-logo.png" alt="KVS" style={{ width: 72, height: 72, borderRadius: 14, objectFit: 'contain' }} />
           <div>
             <h1 className="title">KVS Spices</h1>
             <p className="subtitle" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
