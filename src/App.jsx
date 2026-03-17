@@ -113,10 +113,10 @@ function App() {
     }
   };
 
-  // ── Fetch on mount + auto-poll every 30s ──
+  // ── Fetch on mount + auto-poll every 10s ──
   useEffect(() => {
     refreshFromSheets();
-    const interval = setInterval(() => refreshFromSheets(true), 30000);
+    const interval = setInterval(() => refreshFromSheets(true), 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -268,8 +268,8 @@ function App() {
   const handleDeleteEntry = (id) => {
     if (confirm('Delete this purchase entry?')) {
       setEntries(prev => prev.filter(e => e.id !== id));
-      // Delete from Google Sheets
       postToSheet({ kind: 'delete_entry', id: id.toString() })
+        .then(() => refreshFromSheets(true))
         .catch(err => console.error("Error deleting entry from Sheets:", err));
     }
   };
@@ -277,8 +277,8 @@ function App() {
   const handleDeleteSale = (id) => {
     if (confirm('Delete this sale entry?')) {
       setSales(prev => prev.filter(s => s.id !== id));
-      // Delete from Google Sheets
       postToSheet({ kind: 'delete_sale', id: id.toString() })
+        .then(() => refreshFromSheets(true))
         .catch(err => console.error("Error deleting sale from Sheets:", err));
     }
   };
@@ -367,6 +367,8 @@ function App() {
     setDispatchModal(null);
     setDispatchPrice('');
     setActiveTab('dashboard');
+    // Refresh from Sheets so everything stays in sync
+    await refreshFromSheets(true);
   };
 
   // ── Transfer Modal ──
@@ -470,6 +472,8 @@ function App() {
     setTransferModal(false);
     setActiveTab('dashboard');
     setSelectedShop(tfTo);
+    // Refresh from Sheets so everything stays in sync
+    await refreshFromSheets(true);
   };
 
   return (
