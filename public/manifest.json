@@ -1,6 +1,6 @@
 {
-  "name": "SpiceSentry – KVS Spices & Traders",
-  "short_name": "SpiceSentry",
+  "name": "KVS Spices",
+  "short_name": "KVS Spices",
   "description": "Spice inventory & trading tracker for KVS Spices & Traders",
   "start_url": "/",
   "display": "standalone",

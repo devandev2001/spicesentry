@@ -41,6 +41,15 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
 
+  // Custom confirm modal (replaces native confirm() for beautiful UI)
+  const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm }
+  const showConfirm = (message) => new Promise(resolve => {
+    setConfirmModal({ message, onConfirm: () => { setConfirmModal(null); resolve(true); }, onCancel: () => { setConfirmModal(null); resolve(false); } });
+  });
+
+  // Navigate to tab + scroll to top
+  const goTo = (tab) => { setActiveTab(tab); window.scrollTo(0, 0); };
+
   // Data State — load from localStorage INSTANTLY, then refresh from Sheets
   const [entries, setEntries] = useState(() => {
     try { return JSON.parse(localStorage.getItem('spice_entries') || '[]'); } catch { return []; }
@@ -265,8 +274,8 @@ function App() {
     }
   };
 
-  const handleDeleteEntry = (id) => {
-    if (confirm('Delete this purchase entry?')) {
+  const handleDeleteEntry = async (id) => {
+    if (await showConfirm('Delete this purchase entry?')) {
       setEntries(prev => prev.filter(e => e.id !== id));
       postToSheet({ kind: 'delete_entry', id: id.toString() })
         .then(() => refreshFromSheets(true))
@@ -274,8 +283,8 @@ function App() {
     }
   };
 
-  const handleDeleteSale = (id) => {
-    if (confirm('Delete this sale entry?')) {
+  const handleDeleteSale = async (id) => {
+    if (await showConfirm('Delete this sale entry?')) {
       setSales(prev => prev.filter(s => s.id !== id));
       postToSheet({ kind: 'delete_sale', id: id.toString() })
         .then(() => refreshFromSheets(true))
@@ -287,7 +296,7 @@ function App() {
   const [dispatchModal, setDispatchModal] = useState(null); // { spiceId, spiceLabel, remainingQty, loadId }
   const [dispatchPrice, setDispatchPrice] = useState('');
 
-  const handleDispatchLoad = (spiceId) => {
+  const handleDispatchLoad = async (spiceId) => {
     const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
     const load = getLoad(selectedShop, spiceId);
     
@@ -298,7 +307,7 @@ function App() {
     const remainingQty = Math.max(0, totalQty - soldQty);
 
     if (remainingQty <= 0) {
-      if (confirm(`No remaining ${spiceLabel} stock. Reset load anyway?`)) {
+      if (await showConfirm(`No remaining ${spiceLabel} stock. Reset load anyway?`)) {
         const newLoadId = Date.now().toString();
         const newLoadStart = Date.now();
         setShopLoads(prev => ({
@@ -366,7 +375,7 @@ function App() {
 
     setDispatchModal(null);
     setDispatchPrice('');
-    setActiveTab('dashboard');
+    goTo('dashboard');
     // Refresh from Sheets so everything stays in sync
     await refreshFromSheets(true);
   };
@@ -422,7 +431,7 @@ function App() {
     if (!qty || qty <= 0 || tfFrom === tfTo) return;
     if (!price || price <= 0) return;
     if (qty > tfAvailableQty) {
-      if (!confirm(`⚠️ Only ${tfAvailableQty.toFixed(2)} Kg available in ${tfFrom} but transferring ${qty.toFixed(2)} Kg.\n\nContinue anyway?`)) return;
+      if (!(await showConfirm(`⚠️ Only ${tfAvailableQty.toFixed(2)} Kg available in ${tfFrom} but transferring ${qty.toFixed(2)} Kg.\n\nContinue anyway?`))) return;
     }
 
     const fromLoad = getLoad(tfFrom, tfSpice);
@@ -470,7 +479,7 @@ function App() {
     }
 
     setTransferModal(false);
-    setActiveTab('dashboard');
+    goTo('dashboard');
     setSelectedShop(tfTo);
     // Refresh from Sheets so everything stays in sync
     await refreshFromSheets(true);
@@ -487,6 +496,48 @@ function App() {
         }} />
       )}
       <style>{`@keyframes syncPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+
+      {/* ── Custom Confirm Modal ── */}
+      {confirmModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 10000, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '1.5rem', animation: 'fadeIn 0.15s ease-in-out',
+        }}>
+          <div style={{
+            background: 'var(--card-bg)', borderRadius: 16, padding: '1.5rem',
+            maxWidth: 340, width: '100%', border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <p style={{ color: 'var(--text-primary)', fontSize: '0.95rem', fontWeight: 600, marginBottom: '1.25rem', lineHeight: 1.5, whiteSpace: 'pre-line' }}>
+              {confirmModal.message}
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                onClick={confirmModal.onCancel}
+                style={{
+                  flex: 1, padding: '0.7rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem',
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-secondary)', cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                style={{
+                  flex: 1, padding: '0.7rem', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem',
+                  background: 'var(--primary-accent)', border: 'none',
+                  color: '#fff', cursor: 'pointer',
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="content-area">
         {activeTab === 'dashboard' && (
@@ -526,19 +577,19 @@ function App() {
           <img src="/kvs-logo.png" alt="KVS" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'contain' }} />
           <span>KVS Spices</span>
         </div>
-        <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+        <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => goTo('dashboard')}>
           <Home />
           <span>Dashboard</span>
         </button>
-        <button className={`nav-item ${activeTab === 'add' ? 'active' : ''}`} onClick={() => setActiveTab('add')}>
+        <button className={`nav-item ${activeTab === 'add' ? 'active' : ''}`} onClick={() => goTo('add')}>
           <PlusCircle />
           <span>Buy</span>
         </button>
-        <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => setActiveTab('sell')}>
+        <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => goTo('sell')}>
           <ShoppingBag />
           <span>Sell</span>
         </button>
-        <button className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
+        <button className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
           <Clock />
           <span>History</span>
         </button>
