@@ -238,16 +238,14 @@ function App() {
     };
     
     setEntries(prev => [newEntry, ...prev]);
-    setActiveTab('dashboard');
+    goTo('dashboard');
     setSelectedShop(entry.shop);
 
-    try {
-      await postToSheet({ ...newEntry, kind: 'entry' });
-      // Refresh from Sheets so loadIds & data stay in sync
-      await refreshFromSheets(true);
-    } catch (error) {
-      console.error("Error sending to Google Sheets:", error);
-    }
+    setTimeout(() => {
+      postToSheet({ ...newEntry, kind: 'entry' })
+        .then(() => refreshFromSheets(true))
+        .catch(err => console.error("Error sending to Google Sheets:", err));
+    }, 0);
   };
 
   const handleAddSale = async (sale) => {
@@ -262,16 +260,14 @@ function App() {
     };
 
     setSales(prev => [newSale, ...prev]);
-    setActiveTab('dashboard');
+    goTo('dashboard');
     setSelectedShop(sale.shop);
 
-    try {
-      await postToSheet(newSale);
-      // Refresh from Sheets so loadIds & data stay in sync
-      await refreshFromSheets(true);
-    } catch (error) {
-      console.error("Error sending sale to Google Sheets:", error);
-    }
+    setTimeout(() => {
+      postToSheet(newSale)
+        .then(() => refreshFromSheets(true))
+        .catch(err => console.error("Error sending sale to Google Sheets:", err));
+    }, 0);
   };
 
   const handleDeleteEntry = async (id) => {
@@ -359,13 +355,15 @@ function App() {
     setDispatchPrice('');
     goTo('dashboard');
 
-    // Sync to Google Sheets in the background
-    Promise.all([
-      postToSheet(dispatchSale),
-      postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
-    ])
-      .then(() => refreshFromSheets(true))
-      .catch(err => console.error("Error syncing dispatch to Sheets:", err));
+    // Defer network sync so React paints the navigation first
+    setTimeout(() => {
+      Promise.all([
+        postToSheet(dispatchSale),
+        postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
+      ])
+        .then(() => refreshFromSheets(true))
+        .catch(err => console.error("Error syncing dispatch to Sheets:", err));
+    }, 0);
   };
 
   // ── Transfer Modal ──
@@ -461,13 +459,15 @@ function App() {
     goTo('dashboard');
     setSelectedShop(tfTo);
 
-    // Sync to Google Sheets in the background
-    Promise.all([
-      postToSheet(transferOut),
-      postToSheet({ ...transferIn, kind: 'entry' }),
-    ])
-      .then(() => refreshFromSheets(true))
-      .catch(err => console.error("Error syncing transfer to Sheets:", err));
+    // Defer network sync so React paints the navigation first
+    setTimeout(() => {
+      Promise.all([
+        postToSheet(transferOut),
+        postToSheet({ ...transferIn, kind: 'entry' }),
+      ])
+        .then(() => refreshFromSheets(true))
+        .catch(err => console.error("Error syncing transfer to Sheets:", err));
+    }, 0);
   };
 
   return (
