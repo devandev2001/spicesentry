@@ -47,25 +47,22 @@ function App() {
   const avgCardamom = totalCardamomQty > 0 ? (totalCardamomValue / totalCardamomQty).toFixed(2) : "0.00";
   const avgPepper = totalPepperQty > 0 ? (totalPepperValue / totalPepperQty).toFixed(2) : "0.00";
 
-  // Replace this with your Google Apps Script Web App URL once you deploy it
-  const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbz9_P3ISNQqSpf0UXLSny8JhEnruz2rGSXmFfRF6HzaXgwZLGrMcBP5UTTZNuJJHFeb/exec';
+  // Use our local Node.js backend
+  const LOCAL_BACKEND_URL = 'http://localhost:3001/api/add-entry';
 
   const handleAddEntry = async (entry) => {
-    const newEntry = { ...entry, id: Date.now(), loadId: currentLoadId };
+    const newEntry = { ...entry, id: Date.now(), loadId: currentLoadId, totalValue: entry.qty * entry.price };
     
     // Update local state instantly (Optimistic UI)
     setEntries([newEntry, ...entries]);
     setActiveTab('dashboard'); // Redirect to dashboard after adding
 
-    // Sync to Google Sheet if the URL is configured
-    if (GOOGLE_SHEET_URL !== 'YOUR_WEB_APP_URL_HERE') {
-      try {
-        await fetch(GOOGLE_SHEET_URL, {
-          method: 'POST',
-          mode: 'no-cors', // MUST use no-cors to prevent preflight OPTIONS request block from Google
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8', // MUST be text/plain for no-cors to pass JSON body
-          },
+    try {
+      await fetch(LOCAL_BACKEND_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
           body: JSON.stringify(newEntry)
         });
         console.log("Successfully sent to Google Sheets (in background router)!");
