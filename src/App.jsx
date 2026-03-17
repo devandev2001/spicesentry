@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, AlertCircle, CheckCircle, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -20,53 +20,9 @@ const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV9
 // Helper: Send data to Google Apps Script via GET with payload as URL param
 // (Google Apps Script redirects POST to a URL that only accepts GET,
 //  so we encode the payload in a query parameter instead)
-async function postToSheet(payload) {
+function postToSheet(payload) {
   const url = GSHEET_URL + '?data=' + encodeURIComponent(JSON.stringify(payload));
-  try {
-    const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) throw new Error('Network ' + res.status);
-    return { ok: true };
-  } catch (err) {
-    console.error('Sheet sync error:', err);
-    return { ok: false, error: err.message || 'Sync failed' };
-  }
-}
-
-// ── Toast Notification Component ──
-function Toast({ toasts, onDismiss }) {
-  if (toasts.length === 0) return null;
-  return (
-    <div style={{
-      position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)',
-      zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 8,
-      width: '92%', maxWidth: 420, pointerEvents: 'none',
-    }}>
-      {toasts.map(t => (
-        <div key={t.id} style={{
-          pointerEvents: 'auto',
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '0.7rem 1rem',
-          borderRadius: 12,
-          border: `1px solid ${t.type === 'error' ? 'rgba(248,113,113,0.35)' : 'rgba(16,185,129,0.35)'}`,
-          background: t.type === 'error' ? 'rgba(248,113,113,0.12)' : 'rgba(16,185,129,0.12)',
-          backdropFilter: 'blur(16px)',
-          color: t.type === 'error' ? '#f87171' : '#10b981',
-          fontSize: '0.82rem', fontWeight: 600,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-          animation: 'fadeIn 0.2s ease',
-        }}>
-          {t.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle size={18} />}
-          <span style={{ flex: 1 }}>{t.message}</span>
-          <button onClick={() => onDismiss(t.id)} style={{
-            background: 'none', border: 'none', color: 'inherit',
-            cursor: 'pointer', padding: 2, display: 'flex',
-          }}>
-            <X size={14} />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
+  return fetch(url, { redirect: 'follow' }).catch(err => console.error('Sheet sync error:', err));
 }
 
 function buildDefaultLoads() {
@@ -84,18 +40,6 @@ function App() {
   const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
-  const [initialLoading, setInitialLoading] = useState(true);
-
-  // Toast notifications
-  const [toasts, setToasts] = useState([]);
-  const addToast = useCallback((message, type = 'error') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
-  }, []);
-  const dismissToast = useCallback((id) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  }, []);
 
   // Data State — load from localStorage INSTANTLY, then refresh from Sheets
   const [entries, setEntries] = useState(() => {
@@ -114,19 +58,8 @@ function App() {
   // Helper to get the load for a specific shop + spice
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0', start: Date.now() };
 
-  // Guard to prevent overlapping fetches
-  const fetchingRef = React.useRef(false);
-  const lastFetchTimeRef = React.useRef(0);
-
   // ── Reusable: fetch data from Google Sheets ──
   const refreshFromSheets = async (silent = false) => {
-    // Skip if already fetching, or if last fetch was < 3s ago (debounce rapid triggers)
-    const now = Date.now();
-    if (fetchingRef.current) return;
-    if (silent && (now - lastFetchTimeRef.current) < 3000) return;
-
-    fetchingRef.current = true;
-    lastFetchTimeRef.current = now;
     if (!silent) setSyncing(true);
     try {
       const res = await fetch(GSHEET_URL, { redirect: 'follow' });
@@ -158,37 +91,20 @@ function App() {
       setLastSync(new Date());
     } catch (err) {
       console.warn('Sheet sync failed:', err);
-      if (!silent) addToast('Failed to sync with Google Sheets');
     } finally {
-      fetchingRef.current = false;
       setSyncing(false);
-      setInitialLoading(false);
     }
   };
 
-  // ── Fetch on mount + auto-poll every 10s + refresh on tab focus ──
+  // ── Fetch on mount + auto-poll every 30s ──
   useEffect(() => {
     refreshFromSheets();
-    const interval = setInterval(() => refreshFromSheets(true), 10000);
-
-    // Refresh immediately when user switches back to the app / tab
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') refreshFromSheets(true);
-    };
-    const handleFocus = () => refreshFromSheets(true);
-
-    document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleFocus);
-    };
+    const interval = setInterval(() => refreshFromSheets(true), 30000);
+    return () => clearInterval(interval);
   }, []);
 
-  // Debounced localStorage cache — writes 2s after last state change
-  // Keeps the offline cache fresh without blocking renders
+  // Debounced localStorage cache — only writes once every 5 seconds max
+  // Prevents lag from constant JSON serialization on every poll/update
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
@@ -201,7 +117,7 @@ function App() {
         localStorage.removeItem('spice_entries');
         localStorage.removeItem('spice_sales');
       }
-    }, 2000);
+    }, 5000);
     return () => clearTimeout(timer);
   }, [entries, sales, shopLoads]);
 
@@ -298,11 +214,9 @@ function App() {
     setSelectedShop(entry.shop);
 
     try {
-      const result = await postToSheet({ ...newEntry, kind: 'entry' });
-      if (result.ok) addToast('Purchase saved ✓', 'success');
-      else addToast('Purchase saved locally but failed to sync');
+      await postToSheet({ ...newEntry, kind: 'entry' });
     } catch (error) {
-      addToast('Purchase saved locally but failed to sync');
+      console.error("Error sending to Google Sheets:", error);
     }
   };
 
@@ -322,11 +236,9 @@ function App() {
     setSelectedShop(sale.shop);
 
     try {
-      const result = await postToSheet(newSale);
-      if (result.ok) addToast('Sale recorded ✓', 'success');
-      else addToast('Sale saved locally but failed to sync');
+      await postToSheet(newSale);
     } catch (error) {
-      addToast('Sale saved locally but failed to sync');
+      console.error("Error sending sale to Google Sheets:", error);
     }
   };
 
@@ -335,8 +247,7 @@ function App() {
       setEntries(prev => prev.filter(e => e.id !== id));
       // Delete from Google Sheets
       postToSheet({ kind: 'delete_entry', id: id.toString() })
-        .then(r => { if (!r.ok) addToast('Delete may not have synced to Sheets'); })
-        .catch(() => addToast('Delete may not have synced to Sheets'));
+        .catch(err => console.error("Error deleting entry from Sheets:", err));
     }
   };
 
@@ -345,8 +256,7 @@ function App() {
       setSales(prev => prev.filter(s => s.id !== id));
       // Delete from Google Sheets
       postToSheet({ kind: 'delete_sale', id: id.toString() })
-        .then(r => { if (!r.ok) addToast('Delete may not have synced to Sheets'); })
-        .catch(() => addToast('Delete may not have synced to Sheets'));
+        .catch(err => console.error("Error deleting sale from Sheets:", err));
     }
   };
 
@@ -374,8 +284,7 @@ function App() {
         }));
         // Persist to Sheets
         postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart })
-          .then(r => { if (!r.ok) addToast('Load reset may not have synced'); })
-          .catch(() => addToast('Load reset may not have synced'));
+          .catch(err => console.error("Error saving load reset:", err));
       }
       return;
     }
@@ -406,10 +315,9 @@ function App() {
     setSales(prev => [dispatchSale, ...prev]);
 
     try {
-      const result = await postToSheet(dispatchSale);
-      if (!result.ok) addToast('Dispatch sale may not have synced');
+      await postToSheet(dispatchSale);
     } catch (error) {
-      addToast('Dispatch sale may not have synced');
+      console.error("Error sending dispatch sale to Sheets:", error);
     }
 
     const newLoadId = Date.now().toString();
@@ -422,17 +330,15 @@ function App() {
 
     // Persist load reset to Google Sheets
     try {
-      const result = await postToSheet({
+      await postToSheet({
         kind: 'load',
         shop: selectedShop,
         spice: spiceId,
         loadId: newLoadId,
         start: newLoadStart,
       });
-      if (result.ok) addToast('Load dispatched ✓', 'success');
-      else addToast('Load reset may not have synced');
     } catch (err) {
-      addToast('Load reset may not have synced');
+      console.error("Error saving load reset to Sheets:", err);
     }
 
     setDispatchModal(null);
@@ -525,14 +431,12 @@ function App() {
 
     // Sync to Google Sheets
     try {
-      const [r1, r2] = await Promise.all([
+      await Promise.all([
         postToSheet(transferOut),
         postToSheet({ ...transferIn, kind: 'entry' }),
       ]);
-      if (r1.ok && r2.ok) addToast('Transfer synced ✓', 'success');
-      else addToast('Transfer saved locally but sync may have failed');
     } catch (err) {
-      addToast('Transfer saved locally but sync may have failed');
+      console.error("Error syncing transfer to Sheets:", err);
     }
 
     setTransferModal(false);
@@ -542,9 +446,6 @@ function App() {
 
   return (
     <>
-      {/* Toast notifications */}
-      <Toast toasts={toasts} onDismiss={dismissToast} />
-
       {/* Sync indicator bar */}
       {syncing && (
         <div style={{
@@ -553,38 +454,10 @@ function App() {
           animation: 'syncPulse 1.2s ease-in-out infinite',
         }} />
       )}
-      <style>{`@keyframes syncPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-.skeleton-block { background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%); background-size: 200% 100%; animation: shimmer 1.5s ease-in-out infinite; }
-      `}</style>
+      <style>{`@keyframes syncPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
 
       <div className="content-area">
-        {/* Initial loading skeleton — only on very first fetch when there's absolutely no cached data */}
-        {initialLoading && entries.length === 0 && sales.length === 0 && (
-          <div style={{ animation: 'fadeIn 0.3s ease', padding: '1rem 0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
-              <div className="skeleton-block" style={{ width: 52, height: 52, borderRadius: 12 }} />
-              <div>
-                <div className="skeleton-block" style={{ width: 140, height: 18, borderRadius: 8, marginBottom: 8 }} />
-                <div className="skeleton-block" style={{ width: 100, height: 12, borderRadius: 6 }} />
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 4, marginBottom: '1.5rem' }}>
-              {[1,2,3].map(i => <div key={i} className="skeleton-block" style={{ flex: 1, height: 38, borderRadius: 11 }} />)}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              {[1,2,3,4,5,6].map(i => (
-                <div key={i} className="skeleton-block" style={{ height: 100, borderRadius: 16, border: '1px solid rgba(255,255,255,0.06)' }} />
-              ))}
-            </div>
-            <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '2rem' }}>
-              Loading from Google Sheets…
-            </p>
-          </div>
-        )}
-
-        {/* Dashboard — always show if we have data OR if loading finished */}
-        {(entries.length > 0 || sales.length > 0 || !initialLoading) && activeTab === 'dashboard' && (
+        {activeTab === 'dashboard' && (
           <Dashboard 
             stats={stats} 
             allBranchStats={allBranchStats}
@@ -948,16 +821,6 @@ function App() {
 // COMPONENTS
 function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh }) {
   const [showOverallAvg, setShowOverallAvg] = useState(false);
-  const [secAgo, setSecAgo] = useState(null);
-
-  // Live "X sec ago" counter that updates every second
-  useEffect(() => {
-    if (!lastSync) return;
-    const tick = () => setSecAgo(Math.round((Date.now() - lastSync.getTime()) / 1000));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [lastSync]);
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
@@ -966,14 +829,9 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           <img src="/kvs-logo.png" alt="KVS" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'contain' }} />
           <div>
             <h1 className="title">KVS Spices</h1>
-            <p className="subtitle" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+            <p className="subtitle" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               Current Load ({days} {days === 1 ? 'day' : 'days'})
               {syncing && <span style={{ fontSize: '0.6rem', color: 'var(--primary-accent)', marginLeft: 4 }}>⟳ syncing…</span>}
-              {!syncing && secAgo !== null && (
-                <span style={{ fontSize: '0.6rem', color: secAgo <= 15 ? '#10b981' : 'var(--text-secondary)', marginLeft: 4 }}>
-                  • synced {secAgo}s ago
-                </span>
-              )}
             </p>
           </div>
         </div>
@@ -1666,8 +1524,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     // ── Grand Totals Card ──
     const totals = spices.reduce((acc, spice) => {
-      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id && dateFilter(e));
-      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id && dateFilter(s));
+      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
+      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
       acc.totalBuyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
       acc.totalSellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
       acc.totalBought += se.reduce((s, e) => s + Number(e.qty), 0);
@@ -1858,39 +1716,14 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     doc.line(margin, y, pageW - margin, y);
     y += 6;
 
-    // ── Date filter helper (reuse from History state) ──
-    const dateFilter = (item) => {
-      if (dateFrom) {
-        const from = new Date(dateFrom); from.setHours(0,0,0,0);
-        if (new Date(item.date) < from) return false;
-      }
-      if (dateTo) {
-        const to = new Date(dateTo); to.setHours(23,59,59,999);
-        if (new Date(item.date) > to) return false;
-      }
-      return true;
-    };
-
-    const dateRangeLabel = (dateFrom || dateTo)
-      ? ` (${dateFrom ? format(new Date(dateFrom), 'dd MMM yyyy') : 'Start'} - ${dateTo ? format(new Date(dateTo), 'dd MMM yyyy') : 'Now'})`
-      : '';
-
-    // Show date range in header if active
-    if (dateRangeLabel) {
-      doc.setFontSize(7);
-      doc.setTextColor(...accent);
-      doc.text('Date Filter:' + dateRangeLabel, pageW - margin - 5, y - 2, { align: 'right' });
-      y += 4;
-    }
-
     // ── Per-shop sections ──
     for (const shop of shops) {
       if (y > pageH - 60) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
-      y = sectionTitle(shop + (dateRangeLabel ? dateRangeLabel : ''), y, brandGreen);
+      y = sectionTitle(shop, y, brandGreen);
 
       const shopSummary = spices.map(spice => {
-        const se = entries.filter(e => e.shop === shop && e.type === spice.id && dateFilter(e));
-        const ss = sales.filter(s => s.shop === shop && s.type === spice.id && dateFilter(s));
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id);
         const totalQty = se.reduce((s, e) => s + Number(e.qty), 0);
         const totalBuyValue = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
         const soldQty = ss.reduce((s, e) => s + Number(e.qty), 0);
@@ -1943,8 +1776,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const grandTotals = { bought: 0, buyValue: 0, sold: 0, sellValue: 0 };
     shops.forEach(shop => {
       spices.forEach(spice => {
-        const se = entries.filter(e => e.shop === shop && e.type === spice.id && dateFilter(e));
-        const ss = sales.filter(s => s.shop === shop && s.type === spice.id && dateFilter(s));
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id);
         grandTotals.buyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
         grandTotals.sellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
         grandTotals.bought += se.reduce((s, e) => s + Number(e.qty), 0);
@@ -2093,7 +1926,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         </button>
         <button className="btn btn-primary" style={{ background: 'rgba(76,175,80,0.9)' }} onClick={generateOverallPDF}>
           <Download size={20} />
-          Download Overall Report {(dateFrom || dateTo) ? '(Filtered)' : '(All Shops)'}
+          Download Overall Report (All Shops)
         </button>
       </div>
 
