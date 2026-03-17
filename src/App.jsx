@@ -215,11 +215,14 @@ function App() {
     }
   };
 
-  const handleDispatchLoad = async (spiceId) => {
+  // Dispatch modal state
+  const [dispatchModal, setDispatchModal] = useState(null); // { spiceId, spiceLabel, remainingQty, loadId }
+  const [dispatchPrice, setDispatchPrice] = useState('');
+
+  const handleDispatchLoad = (spiceId) => {
     const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
     const load = getLoad(selectedShop, spiceId);
     
-    // Calculate remaining qty
     const spiceEntries = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spiceId);
     const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spiceId);
     const totalQty = spiceEntries.reduce((sum, e) => sum + Number(e.qty), 0);
@@ -236,15 +239,17 @@ function App() {
       return;
     }
 
-    const priceStr = prompt(`Dispatch ${remainingQty.toFixed(2)} Kg of ${spiceLabel} from ${selectedShop}.\n\nEnter sell price per Kg (₹):`);
-    if (!priceStr) return;
-    const sellPrice = parseFloat(priceStr);
-    if (isNaN(sellPrice) || sellPrice <= 0) {
-      alert('Invalid price. Dispatch cancelled.');
-      return;
-    }
+    setDispatchPrice('');
+    setDispatchModal({ spiceId, spiceLabel, remainingQty, loadId: load.id });
+  };
 
-    // Record as a sale
+  const confirmDispatch = async () => {
+    if (!dispatchModal) return;
+    const sellPrice = parseFloat(dispatchPrice);
+    if (isNaN(sellPrice) || sellPrice <= 0) return;
+
+    const { spiceId, remainingQty, loadId } = dispatchModal;
+
     const dispatchSale = {
       shop: selectedShop,
       type: spiceId,
@@ -252,14 +257,13 @@ function App() {
       sellPrice,
       buyerName: 'Dispatch',
       id: Date.now(),
-      loadId: load.id,
+      loadId,
       totalValue: remainingQty * sellPrice,
       kind: 'sale',
       date: new Date().toISOString(),
     };
     setSales(prev => [dispatchSale, ...prev]);
 
-    // Send to Google Sheets
     try {
       await fetch(LOCAL_SALE_URL, {
         method: 'POST',
@@ -270,11 +274,12 @@ function App() {
       console.error("Error sending dispatch sale to Sheets:", error);
     }
 
-    // Reset the load
     setShopLoads(prev => ({
       ...prev,
       [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
     }));
+    setDispatchModal(null);
+    setDispatchPrice('');
     setActiveTab('dashboard');
   };
 
@@ -327,6 +332,117 @@ function App() {
           <span>History</span>
         </button>
       </nav>
+
+      {/* Dispatch Price Modal */}
+      {dispatchModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
+          animation: 'fadeIn 0.2s ease',
+        }} onClick={() => setDispatchModal(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '90%', maxWidth: 380,
+            background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+            borderRadius: 16, padding: '1.5rem',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.25rem' }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 12,
+                background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Truck size={20} style={{ color: 'var(--danger)' }} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                  Dispatch {dispatchModal.spiceLabel}
+                </h3>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  {selectedShop}
+                </p>
+              </div>
+            </div>
+
+            <div style={{
+              background: 'rgba(88,166,255,0.08)', border: '1px solid rgba(88,166,255,0.15)',
+              borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1.25rem',
+            }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Dispatching Quantity</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--primary-accent)' }}>
+                {dispatchModal.remainingQty.toFixed(2)} <span style={{ fontSize: '0.75rem', fontWeight: 400 }}>Kg</span>
+              </div>
+            </div>
+
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
+              Sell Price per Kg (₹)
+            </label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              value={dispatchPrice}
+              onChange={e => setDispatchPrice(e.target.value)}
+              autoFocus
+              placeholder="Enter price..."
+              style={{
+                width: '100%', padding: '0.75rem 1rem',
+                background: 'var(--bg-primary)', border: '1px solid var(--border-color)',
+                borderRadius: 10, color: 'var(--text-primary)',
+                fontSize: '1.1rem', fontWeight: 600,
+                outline: 'none', boxSizing: 'border-box',
+                transition: 'border-color 0.15s ease',
+              }}
+              onFocus={e => e.target.style.borderColor = 'var(--primary-accent)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+              onKeyDown={e => { if (e.key === 'Enter' && dispatchPrice) confirmDispatch(); }}
+            />
+
+            {dispatchPrice && parseFloat(dispatchPrice) > 0 && (
+              <div style={{
+                marginTop: '0.75rem', padding: '0.6rem 0.75rem',
+                background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+                borderRadius: 8, fontSize: '0.8rem', color: '#10b981',
+              }}>
+                Total: ₹{(dispatchModal.remainingQty * parseFloat(dispatchPrice)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+              <button
+                onClick={() => setDispatchModal(null)}
+                style={{
+                  flex: 1, padding: '0.7rem',
+                  borderRadius: 10, border: '1px solid var(--border-color)',
+                  background: 'transparent', color: 'var(--text-secondary)',
+                  fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDispatch}
+                disabled={!dispatchPrice || parseFloat(dispatchPrice) <= 0}
+                style={{
+                  flex: 1, padding: '0.7rem',
+                  borderRadius: 10, border: 'none',
+                  background: (!dispatchPrice || parseFloat(dispatchPrice) <= 0) ? 'rgba(248,113,113,0.3)' : 'var(--danger)',
+                  color: '#fff',
+                  fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
+                  opacity: (!dispatchPrice || parseFloat(dispatchPrice) <= 0) ? 0.5 : 1,
+                  transition: 'all 0.15s ease',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                }}
+              >
+                <Truck size={16} />
+                Dispatch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
