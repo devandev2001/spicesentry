@@ -1349,6 +1349,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all', 'purchase', 'sale'
   const [pdfViewUrl, setPdfViewUrl] = useState(null); // for inline PDF viewer (iOS-safe)
+  const [pdfLoading, setPdfLoading] = useState(false); // loading spinner while generating
 
   // Merge purchases + sales, sort newest first
   const allRecords = [
@@ -1377,6 +1378,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
 
   const generatePDF = async (mode = 'download') => {
+    if (mode === 'view') { setPdfLoading(true); setPdfViewUrl(null); await new Promise(r => setTimeout(r, 50)); }
     // ── Pre-load logo as base64 ──
     let logoBase64 = null;
     try {
@@ -1693,6 +1695,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     if (mode === 'view') {
       const dataUri = doc.output('datauristring');
       setPdfViewUrl(dataUri);
+      setPdfLoading(false);
     } else {
       doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
     }
@@ -1700,6 +1703,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   // ── Overall Report (all shops) ──
   const generateOverallPDF = async (mode = 'download') => {
+    if (mode === 'view') { setPdfLoading(true); setPdfViewUrl(null); await new Promise(r => setTimeout(r, 50)); }
     let logoBase64 = null;
     try {
       const img = new Image();
@@ -1878,6 +1882,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     if (mode === 'view') {
       const dataUri = doc.output('datauristring');
       setPdfViewUrl(dataUri);
+      setPdfLoading(false);
     } else {
       doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
     }
@@ -2061,10 +2066,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       </div>
 
       {/* ── Full-screen PDF viewer overlay (iOS-safe, no popup) ── */}
-      {pdfViewUrl && (
+      {(pdfLoading || pdfViewUrl) && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: 9999, background: 'rgba(0,0,0,0.92)',
+          zIndex: 9999, background: 'rgba(0,0,0,0.95)',
           display: 'flex', flexDirection: 'column',
           animation: 'fadeIn 0.2s ease-in-out',
         }}>
@@ -2073,9 +2078,11 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
             padding: '0.75rem 1rem',
             background: 'var(--card-bg)', borderBottom: '1px solid rgba(255,255,255,0.08)',
           }}>
-            <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>PDF Report</span>
+            <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>
+              {pdfLoading ? 'Generating PDF…' : 'PDF Report'}
+            </span>
             <button
-              onClick={() => setPdfViewUrl(null)}
+              onClick={() => { setPdfViewUrl(null); setPdfLoading(false); }}
               style={{
                 background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.3)',
                 color: '#f87171', borderRadius: 8, padding: '0.4rem 1rem',
@@ -2085,11 +2092,26 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               ✕ Close
             </button>
           </div>
-          <iframe
-            src={pdfViewUrl}
-            title="PDF Report"
-            style={{ flex: 1, border: 'none', width: '100%', background: '#fff' }}
-          />
+          {pdfLoading ? (
+            <div style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: '1rem',
+            }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: '50%',
+                border: '3px solid rgba(88,166,255,0.2)',
+                borderTopColor: '#58a6ff',
+                animation: 'spin 0.8s linear infinite',
+              }} />
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Preparing your report…</span>
+            </div>
+          ) : (
+            <iframe
+              src={pdfViewUrl}
+              title="PDF Report"
+              style={{ flex: 1, border: 'none', width: '100%', background: '#525659' }}
+            />
+          )}
         </div>
       )}
 
