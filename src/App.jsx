@@ -150,8 +150,8 @@ function App() {
   }, Date.now());
   const daysSinceLoadStart = Math.max(1, differenceInDays(new Date(), new Date(oldestLoadStart)) + 1);
 
-  const LOCAL_BACKEND_URL = 'http://localhost:3001/api/add-entry';
-  const LOCAL_SALE_URL    = 'http://localhost:3001/api/add-sale';
+  // Google Apps Script web-app endpoint (handles both entries & sales)
+  const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV94Yj_5HXKg2GwpFB8WPXwrtLZqt0HTAz9oBWs3TKxq7KtqypAQ/exec';
 
   const handleAddEntry = async (entry) => {
     const load = getLoad(entry.shop, entry.type);
@@ -167,10 +167,9 @@ function App() {
     setSelectedShop(entry.shop);
 
     try {
-      await fetch(LOCAL_BACKEND_URL, {
+      await fetch(GSHEET_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newEntry)
+        body: JSON.stringify({ ...newEntry, kind: 'entry' }),
       });
     } catch (error) {
       console.error("Error sending to Google Sheets:", error);
@@ -193,10 +192,9 @@ function App() {
     setSelectedShop(sale.shop);
 
     try {
-      await fetch(LOCAL_SALE_URL, {
+      await fetch(GSHEET_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSale)
+        body: JSON.stringify(newSale),
       });
     } catch (error) {
       console.error("Error sending sale to Google Sheets:", error);
@@ -265,10 +263,9 @@ function App() {
     setSales(prev => [dispatchSale, ...prev]);
 
     try {
-      await fetch(LOCAL_SALE_URL, {
+      await fetch(GSHEET_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dispatchSale)
+        body: JSON.stringify(dispatchSale),
       });
     } catch (error) {
       console.error("Error sending dispatch sale to Sheets:", error);
@@ -369,8 +366,8 @@ function App() {
     // Sync to Google Sheets
     try {
       await Promise.all([
-        fetch(LOCAL_SALE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transferOut) }),
-        fetch(LOCAL_BACKEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transferIn) }),
+        fetch(GSHEET_URL, { method: 'POST', body: JSON.stringify(transferOut) }),
+        fetch(GSHEET_URL, { method: 'POST', body: JSON.stringify({ ...transferIn, kind: 'entry' }) }),
       ]);
     } catch (err) {
       console.error("Error syncing transfer to Sheets:", err);
