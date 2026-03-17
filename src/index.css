@@ -67,6 +67,18 @@ body {
     radial-gradient(ellipse 60% 40% at 0% 100%, var(--pepper-glow) 0%, transparent 60%);
 }
 
+/* ── Desktop Layout ── */
+@media (min-width: 768px) {
+  #root {
+    max-width: 100%;
+    flex-direction: row;
+    background:
+      radial-gradient(ellipse 60% 40% at 50% -10%, rgba(88, 166, 255, 0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 100% 100%, var(--cardamom-glow) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 0% 100%, var(--pepper-glow) 0%, transparent 60%);
+  }
+}
+
 /* Glass Card */
 .glass-card {
   background: var(--surface-color);
@@ -81,6 +93,19 @@ body {
 
 .glass-card:active {
   transform: scale(0.985);
+}
+
+@media (min-width: 768px) {
+  .glass-card {
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.2s ease;
+  }
+  .glass-card:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  }
+  .glass-card:active {
+    transform: none;
+  }
 }
 
 /* Typography */
@@ -118,6 +143,28 @@ body {
   z-index: 100;
 }
 
+@media (min-width: 768px) {
+  .bottom-nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 220px;
+    max-width: 220px;
+    transform: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding: 1.5rem 0.75rem;
+    padding-bottom: 1.5rem;
+    border-top: none;
+    border-right: 1px solid var(--surface-border);
+    gap: 0.25rem;
+    background: rgba(10, 14, 20, 0.95);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  }
+}
+
 .nav-item {
   display: flex;
   flex-direction: column;
@@ -135,8 +182,31 @@ body {
   padding: 0.35rem 0;
 }
 
+@media (min-width: 768px) {
+  .nav-item {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.75rem;
+    flex: unset;
+    font-size: 0.9rem;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .nav-item:hover {
+    background: var(--surface-hover);
+  }
+}
+
 .nav-item.active {
   color: var(--primary-accent);
+}
+
+@media (min-width: 768px) {
+  .nav-item.active {
+    background: rgba(88, 166, 255, 0.1);
+  }
 }
 
 .nav-item.active::after {
@@ -150,6 +220,17 @@ body {
   border-radius: 0 0 4px 4px;
   background: var(--primary-accent);
   box-shadow: 0 0 10px var(--primary-accent);
+}
+
+@media (min-width: 768px) {
+  .nav-item.active::after {
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 20px;
+    border-radius: 0 4px 4px 0;
+  }
 }
 
 .nav-item svg {
@@ -171,12 +252,46 @@ body {
   overflow-y: auto;
 }
 
+@media (min-width: 768px) {
+  .content-area {
+    margin-left: 220px;
+    padding: 2rem 3rem;
+    padding-bottom: 2rem;
+    max-width: 1100px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .content-area {
+    padding: 2.5rem 4rem;
+  }
+}
+
 /* Header */
 .header-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1.5rem;
+}
+
+/* Nav Brand (sidebar only on desktop) */
+.nav-brand {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1.5rem;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.03em;
+  }
 }
 
 /* Shop Selector */
@@ -190,6 +305,12 @@ body {
   overflow-x: auto;
   scrollbar-width: none;
   gap: 2px;
+}
+
+@media (min-width: 768px) {
+  .shop-selector {
+    max-width: 480px;
+  }
 }
 
 .shop-selector::-webkit-scrollbar {
@@ -229,6 +350,13 @@ body {
   grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
   margin-bottom: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .spice-scroll {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.75rem;
+  }
 }
 
 .spice-tab {
@@ -295,6 +423,33 @@ body {
   color: rgba(255, 255, 255, 0.15);
 }
 
+@media (min-width: 768px) {
+  .modern-input {
+    max-width: 480px;
+  }
+}
+
+/* Input Field (used in modals) */
+.input-field {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1.5px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 0.65rem 0.85rem;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.input-field:focus {
+  border-color: var(--primary-accent);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+}
+
 /* Buttons */
 .btn {
   width: 100%;
@@ -315,6 +470,12 @@ body {
 
 .btn:active {
   transform: scale(0.97);
+}
+
+@media (min-width: 768px) {
+  .btn {
+    max-width: 360px;
+  }
 }
 
 .btn-primary {
@@ -341,6 +502,20 @@ body {
   margin-bottom: 1.5rem;
 }
 
+@media (min-width: 768px) {
+  .stat-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .stat-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+}
+
 .stat-value {
   font-size: 1.75rem;
   font-weight: 800;
@@ -364,6 +539,12 @@ body {
   align-items: center;
   padding: 0.85rem 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+@media (min-width: 768px) {
+  .history-item {
+    padding: 1rem 0;
+  }
 }
 
 .history-item:last-child {
@@ -424,7 +605,42 @@ body {
   background: transparent;
 }
 
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
 /* Selection */
 ::selection {
   background: rgba(88, 166, 255, 0.3);
+}
+
+/* Desktop form layout */
+@media (min-width: 768px) {
+  .glass-card form,
+  form.glass-card {
+    max-width: 560px;
+  }
+}
+
+/* Desktop History buttons row */
+@media (min-width: 768px) {
+  .history-buttons-row {
+    flex-direction: row !important;
+  }
+  .history-buttons-row .btn {
+    max-width: none;
+    flex: 1;
+  }
 }

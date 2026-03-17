@@ -289,12 +289,14 @@ function App() {
   const [tfTo, setTfTo] = useState(SHOPS[1]);
   const [tfSpice, setTfSpice] = useState(SPICES[0].id);
   const [tfQty, setTfQty] = useState('');
+  const [tfPrice, setTfPrice] = useState('');
 
   const openTransferModal = () => {
     setTfFrom(selectedShop);
     setTfTo(SHOPS.find(s => s !== selectedShop) || SHOPS[0]);
     setTfSpice(SPICES[0].id);
     setTfQty('');
+    setTfPrice('');
     setTransferModal(true);
   };
 
@@ -326,9 +328,10 @@ function App() {
 
   const handleTransfer = async () => {
     const qty = parseFloat(tfQty);
+    const price = parseFloat(tfPrice);
     if (!qty || qty <= 0 || qty > tfAvailableQty || tfFrom === tfTo) return;
+    if (!price || price <= 0) return;
 
-    const price = tfAvgPrice;
     const fromLoad = getLoad(tfFrom, tfSpice);
     const toLoad = getLoad(tfTo, tfSpice);
     const now = new Date().toISOString();
@@ -411,6 +414,10 @@ function App() {
       </div>
 
       <nav className="bottom-nav">
+        <div className="nav-brand">
+          <img src="/kvs-logo.png" alt="KVS" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'contain' }} />
+          <span>KVS Spices</span>
+        </div>
         <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
           <Home />
           <span>Dashboard</span>
@@ -643,8 +650,38 @@ function App() {
               </button>
             </div>
 
+            {/* Transfer Price */}
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Price per Kg (₹)</label>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={tfPrice}
+                onChange={e => setTfPrice(e.target.value)}
+                placeholder="Enter price..."
+                className="input-field"
+                style={{ flex: 1, padding: '0.65rem 0.85rem', fontSize: '1rem', fontWeight: 600 }}
+              />
+              <button
+                onClick={() => setTfPrice(tfAvgPrice.toFixed(2))}
+                style={{
+                  padding: '0.5rem 0.75rem', borderRadius: 10,
+                  border: '1px solid rgba(16,185,129,0.3)',
+                  background: 'rgba(16,185,129,0.1)',
+                  color: '#10b981',
+                  fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+                title="Use current avg buy price"
+              >
+                Avg
+              </button>
+            </div>
+
             {/* Transfer value preview */}
-            {tfQty && parseFloat(tfQty) > 0 && (
+            {tfQty && parseFloat(tfQty) > 0 && tfPrice && parseFloat(tfPrice) > 0 && (
               <div style={{
                 padding: '0.6rem 0.75rem', marginBottom: '0.75rem',
                 background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
@@ -652,7 +689,7 @@ function App() {
                 display: 'flex', justifyContent: 'space-between',
               }}>
                 <span>Transfer Value</span>
-                <span style={{ fontWeight: 700 }}>₹{(parseFloat(tfQty) * tfAvgPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                <span style={{ fontWeight: 700 }}>₹{(parseFloat(tfQty) * parseFloat(tfPrice)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
               </div>
             )}
 
@@ -682,14 +719,14 @@ function App() {
               </button>
               <button
                 onClick={handleTransfer}
-                disabled={!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || tfFrom === tfTo}
+                disabled={!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || tfFrom === tfTo || !tfPrice || parseFloat(tfPrice) <= 0}
                 style={{
                   flex: 1, padding: '0.7rem',
                   borderRadius: 10, border: 'none',
-                  background: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty) ? 'rgba(16,185,129,0.3)' : '#10b981',
+                  background: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || !tfPrice || parseFloat(tfPrice) <= 0) ? 'rgba(16,185,129,0.3)' : '#10b981',
                   color: '#fff',
                   fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
-                  opacity: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty) ? 0.5 : 1,
+                  opacity: (!tfQty || parseFloat(tfQty) <= 0 || parseFloat(tfQty) > tfAvailableQty || !tfPrice || parseFloat(tfPrice) <= 0) ? 0.5 : 1,
                   transition: 'all 0.15s ease',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
                 }}
@@ -1667,7 +1704,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         ))}
       </div>
 
-      <div className="glass-card" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <div className="glass-card history-buttons-row" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <button className="btn btn-primary" style={{ background: 'var(--primary-accent)' }} onClick={generatePDF}>
           <Download size={20} />
           Download {selectedShop} Report
