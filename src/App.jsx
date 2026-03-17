@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 const SHOPS = ['KVS Anachal', '20 Acre', 'Kallar'];
 const SPICES = [
@@ -235,6 +237,8 @@ function App() {
             selectedShop={selectedShop}
             onSelectShop={setSelectedShop}
             shops={SHOPS}
+            spices={SPICES}
+            shopLoads={shopLoads}
           />
         )}
       </div>
@@ -695,7 +699,7 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
   );
 }
 
-function History({ entries, sales, selectedShop, onSelectShop, shops }) {
+function History({ entries, sales, selectedShop, onSelectShop, shops, spices, shopLoads }) {
   // Merge purchases + sales, sort newest first
   const allRecords = [
     ...entries.map(e => ({ ...e, kind: 'purchase' })),
@@ -703,6 +707,275 @@ function History({ entries, sales, selectedShop, onSelectShop, shops }) {
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const shopRecords = allRecords.filter(r => r.shop === selectedShop);
+
+  const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
+
+  const generatePDF = () => {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 14;
+    let y = 15;
+
+    // ── Colors ──
+    const dark = [13, 17, 23];
+    const accent = [88, 166, 255];
+    const green = [16, 185, 129];
+    const red = [248, 113, 113];
+    const grey = [140, 150, 165];
+    const white = [255, 255, 255];
+
+    // ── Background ──
+    doc.setFillColor(...dark);
+    doc.rect(0, 0, pageW, doc.internal.pageSize.getHeight(), 'F');
+
+    // ── Header ──
+    doc.setFillColor(22, 27, 34);
+    doc.roundedRect(margin, y, pageW - margin * 2, 28, 4, 4, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.setTextColor(...accent);
+    doc.text('SpiceSentry', margin + 6, y + 12);
+    doc.setFontSize(10);
+    doc.setTextColor(...grey);
+    doc.text(`Report for ${selectedShop}`, margin + 6, y + 20);
+    doc.setFontSize(9);
+    doc.text(format(new Date(), 'MMMM d, yyyy • h:mm a'), pageW - margin - 6, y + 12, { align: 'right' });
+    y += 35;
+
+    // ── Summary Stats per Spice ──
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...white);
+    doc.text('Stock Summary', margin, y);
+    y += 7;
+
+    const summaryData = spices.map(spice => {
+      const load = getLoad(selectedShop, spice.id);
+      const spiceEntries = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spice.id);
+      const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spice.id);
+      const totalQty = spiceEntries.reduce((s, e) => s + Number(e.qty), 0);
+      const totalBuyValue = spiceEntries.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      const soldQty = spiceSales.reduce((s, e) => s + Number(e.qty), 0);
+      const soldValue = spiceSales.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      const remainingQty = Math.max(0, totalQty - soldQty);
+      const remainingValue = totalBuyValue - soldValue;
+      const avgBuy = remainingQty > 0 ? (remainingValue / remainingQty).toFixed(2) : (totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00');
+      const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
+      const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty).toFixed(2) : '-';
+
+      return [
+        spice.label,
+        totalQty.toFixed(2),
+        `₹${avgBuy}`,
+        soldQty.toFixed(2),
+        avgSell !== '-' ? `₹${avgSell}` : '-',
+        remainingQty.toFixed(2),
+        `₹${remainingValue > 0 ? Math.round(remainingValue).toLocaleString('en-IN') : '0'}`,
+        profit !== '-' ? `₹${Number(profit).toLocaleString('en-IN')}` : '-',
+      ];
+    }).filter(row => Number(row[1]) > 0 || Number(row[3]) > 0);
+
+    if (summaryData.length > 0) {
+      doc.autoTable({
+        startY: y,
+        head: [['Spice', 'Bought Kg', 'Buy Avg', 'Sold Kg', 'Sell Avg', 'Balance Kg', 'Stock Value', 'Profit']],
+        body: summaryData,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica',
+          fontSize: 8.5,
+          textColor: [210, 215, 225],
+          cellPadding: { top: 3, bottom: 3, left: 4, right: 4 },
+          lineWidth: 0,
+        },
+        headStyles: {
+          fillColor: [22, 27, 34],
+          textColor: [...accent],
+          fontStyle: 'bold',
+          fontSize: 8,
+        },
+        alternateRowStyles: {
+          fillColor: [18, 22, 30],
+        },
+        columnStyles: {
+          0: { fontStyle: 'bold', textColor: white },
+          6: { fontStyle: 'bold' },
+          7: { fontStyle: 'bold' },
+        },
+        margin: { left: margin, right: margin },
+        didParseCell: (data) => {
+          // Color profit column green/red
+          if (data.column.index === 7 && data.section === 'body') {
+            const val = data.cell.raw;
+            if (val && val !== '-') {
+              const num = parseFloat(val.replace(/[₹,]/g, ''));
+              data.cell.styles.textColor = num >= 0 ? green : red;
+            }
+          }
+        },
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    }
+
+    // ── Grand Totals ──
+    const totals = spices.reduce((acc, spice) => {
+      const load = getLoad(selectedShop, spice.id);
+      const se = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spice.id);
+      const ss = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spice.id);
+      const bQty = se.reduce((s, e) => s + Number(e.qty), 0);
+      const bVal = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      const sQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+      const sVal = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      acc.totalBought += bQty;
+      acc.totalBuyValue += bVal;
+      acc.totalSold += sQty;
+      acc.totalSellValue += sVal;
+      return acc;
+    }, { totalBought: 0, totalBuyValue: 0, totalSold: 0, totalSellValue: 0 });
+
+    const totalRemaining = totals.totalBought - totals.totalSold;
+    const totalRemainingValue = totals.totalBuyValue - totals.totalSellValue;
+    const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
+
+    // Totals row
+    doc.setFillColor(22, 27, 34);
+    doc.roundedRect(margin, y, pageW - margin * 2, 22, 4, 4, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...grey);
+    doc.text('Total Invested', margin + 6, y + 8);
+    doc.text('Total Sold', margin + 55, y + 8);
+    doc.text('Remaining Value', margin + 100, y + 8);
+    doc.text('Net Profit', pageW - margin - 6, y + 8, { align: 'right' });
+
+    doc.setFontSize(12);
+    doc.setTextColor(...white);
+    doc.text(`₹${Math.round(totals.totalBuyValue).toLocaleString('en-IN')}`, margin + 6, y + 17);
+    doc.setTextColor(...accent);
+    doc.text(`₹${Math.round(totals.totalSellValue).toLocaleString('en-IN')}`, margin + 55, y + 17);
+    doc.setTextColor(...white);
+    doc.text(`₹${Math.round(totalRemainingValue).toLocaleString('en-IN')}`, margin + 100, y + 17);
+    doc.setTextColor(totalProfit >= 0 ? green[0] : red[0], totalProfit >= 0 ? green[1] : red[1], totalProfit >= 0 ? green[2] : red[2]);
+    doc.text(`${totalProfit >= 0 ? '+' : ''}₹${Math.round(totalProfit).toLocaleString('en-IN')}`, pageW - margin - 6, y + 17, { align: 'right' });
+    y += 30;
+
+    // ── Purchase Records ──
+    const shopPurchases = entries
+      .filter(e => e.shop === selectedShop)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (shopPurchases.length > 0) {
+      // Check if we need a new page
+      if (y > doc.internal.pageSize.getHeight() - 50) {
+        doc.addPage();
+        doc.setFillColor(...dark);
+        doc.rect(0, 0, pageW, doc.internal.pageSize.getHeight(), 'F');
+        y = 15;
+      }
+
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...white);
+      doc.text('Purchase Records', margin, y);
+      y += 7;
+
+      const purchaseRows = shopPurchases.map(e => [
+        format(new Date(e.date), 'dd MMM yy'),
+        e.type.replace('_', ' '),
+        `${Number(e.qty).toFixed(2)} Kg`,
+        `₹${Number(e.price).toLocaleString('en-IN')}`,
+        `₹${(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')}`,
+      ]);
+
+      doc.autoTable({
+        startY: y,
+        head: [['Date', 'Spice', 'Qty', 'Price/Kg', 'Total']],
+        body: purchaseRows,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica', fontSize: 8, textColor: [210, 215, 225],
+          cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 },
+        },
+        headStyles: { fillColor: [22, 27, 34], textColor: [...accent], fontStyle: 'bold', fontSize: 7.5 },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: { 4: { fontStyle: 'bold', textColor: white } },
+        margin: { left: margin, right: margin },
+        didDrawPage: (data) => {
+          // Dark background on new pages
+          if (data.pageNumber > 1) {
+            doc.setFillColor(...dark);
+            doc.rect(0, 0, pageW, doc.internal.pageSize.getHeight(), 'F');
+          }
+        },
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    }
+
+    // ── Sale Records ──
+    const shopSales = sales
+      .filter(s => s.shop === selectedShop)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (shopSales.length > 0) {
+      if (y > doc.internal.pageSize.getHeight() - 50) {
+        doc.addPage();
+        doc.setFillColor(...dark);
+        doc.rect(0, 0, pageW, doc.internal.pageSize.getHeight(), 'F');
+        y = 15;
+      }
+
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...white);
+      doc.text('Sale Records', margin, y);
+      y += 7;
+
+      const saleRows = shopSales.map(s => [
+        format(new Date(s.date), 'dd MMM yy'),
+        s.type.replace('_', ' '),
+        `${Number(s.qty).toFixed(2)} Kg`,
+        `₹${Number(s.sellPrice).toLocaleString('en-IN')}`,
+        `₹${(Number(s.qty) * Number(s.sellPrice)).toLocaleString('en-IN')}`,
+        s.buyerName || '-',
+      ]);
+
+      doc.autoTable({
+        startY: y,
+        head: [['Date', 'Spice', 'Qty', 'Sell/Kg', 'Total', 'Buyer']],
+        body: saleRows,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica', fontSize: 8, textColor: [210, 215, 225],
+          cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 },
+        },
+        headStyles: { fillColor: [22, 27, 34], textColor: green, fontStyle: 'bold', fontSize: 7.5 },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: { 4: { fontStyle: 'bold', textColor: green } },
+        margin: { left: margin, right: margin },
+        didDrawPage: (data) => {
+          if (data.pageNumber > 1) {
+            doc.setFillColor(...dark);
+            doc.rect(0, 0, pageW, doc.internal.pageSize.getHeight(), 'F');
+          }
+        },
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    }
+
+    // ── Footer on every page ──
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFillColor(...dark);
+      doc.rect(0, doc.internal.pageSize.getHeight() - 12, pageW, 12, 'F');
+      doc.setFontSize(7);
+      doc.setTextColor(...grey);
+      doc.text('Generated by SpiceSentry', margin, doc.internal.pageSize.getHeight() - 5);
+      doc.text(`Page ${i} of ${totalPages}`, pageW - margin, doc.internal.pageSize.getHeight() - 5, { align: 'right' });
+    }
+
+    doc.save(`SpiceSentry_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  };
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
@@ -722,9 +995,9 @@ function History({ entries, sales, selectedShop, onSelectShop, shops }) {
       </div>
 
       <div className="glass-card" style={{ marginBottom: '1.5rem' }}>
-        <button className="btn btn-primary" style={{ background: 'var(--primary-accent)' }}>
+        <button className="btn btn-primary" style={{ background: 'var(--primary-accent)' }} onClick={generatePDF}>
           <Download size={20} />
-          Download {selectedShop} CSV
+          Download {selectedShop} Report (PDF)
         </button>
       </div>
 
