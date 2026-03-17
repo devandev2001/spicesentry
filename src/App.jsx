@@ -122,10 +122,10 @@ function App() {
     }
   };
 
-  // ── Fetch on mount + auto-poll every 3s ──
+  // ── Fetch on mount + auto-poll every 500ms ──
   useEffect(() => {
     refreshFromSheets();
-    const interval = setInterval(() => refreshFromSheets(true), 1000);
+    const interval = setInterval(() => refreshFromSheets(true), 500);
     return () => clearInterval(interval);
   }, []);
 
