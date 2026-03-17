@@ -1189,6 +1189,9 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!qty || !sellPrice) return alert('Please enter quantity and sell price.');
+    if (parseFloat(qty) > availableQty) {
+      if (!confirm(`⚠️ You only have ${availableQty.toFixed(2)} Kg in stock but selling ${parseFloat(qty).toFixed(2)} Kg.\n\nContinue anyway?`)) return;
+    }
     onSell({ shop, type, qty: parseFloat(qty), sellPrice: parseFloat(sellPrice), buyerName });
     setQty('');
     setSellPrice('');
