@@ -52,13 +52,31 @@ function App() {
 
         if (data.entries)   setEntries(data.entries);
         if (data.sales)     setSales(data.sales);
+
+        // Build loads: use sheet loads if available, otherwise derive from entries
+        let resolvedLoads = {};
         if (data.loads && Object.keys(data.loads).length > 0) {
-          setShopLoads(prev => ({ ...prev, ...data.loads }));
+          resolvedLoads = data.loads;
+        } else {
+          // Derive loads from the most recent loadId per shop+spice in entries
+          const allItems = [...(data.entries || []), ...(data.sales || [])];
+          allItems.forEach(item => {
+            if (item.shop && item.type && item.loadId) {
+              const key = `${item.shop}|${item.type}`;
+              if (!resolvedLoads[key]) {
+                resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now() };
+              }
+            }
+          });
         }
+        if (Object.keys(resolvedLoads).length > 0) {
+          setShopLoads(prev => ({ ...prev, ...resolvedLoads }));
+        }
+
         // Cache locally for offline fallback
         localStorage.setItem('spice_entries', JSON.stringify(data.entries || []));
         localStorage.setItem('spice_sales', JSON.stringify(data.sales || []));
-        if (data.loads) localStorage.setItem('spice_shop_loads', JSON.stringify(data.loads));
+        localStorage.setItem('spice_shop_loads', JSON.stringify(resolvedLoads));
       } catch (err) {
         console.warn('Could not fetch from Google Sheets, using local cache:', err);
         // Fallback to localStorage
