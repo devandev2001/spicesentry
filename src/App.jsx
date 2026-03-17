@@ -62,13 +62,13 @@ function App() {
       try {
         await fetch(GOOGLE_SHEET_URL, {
           method: 'POST',
-          mode: 'no-cors', // Bypasses CORS restrictions for simple POSTs
+          mode: 'no-cors', // MUST use no-cors to prevent preflight OPTIONS request block from Google
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'text/plain;charset=utf-8', // MUST be text/plain for no-cors to pass JSON body
           },
           body: JSON.stringify(newEntry)
         });
-        console.log("Successfully sent to Google Sheets!");
+        console.log("Successfully sent to Google Sheets (in background router)!");
       } catch (error) {
         console.error("Error sending to Google Sheets:", error);
       }
