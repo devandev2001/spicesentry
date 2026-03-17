@@ -390,8 +390,9 @@ function App() {
   const tfAvailableQty = (() => {
     if (!transferModal) return 0;
     const load = getLoad(tfFrom, tfSpice);
-    const se = entries.filter(e => e.shop === tfFrom && e.loadId === load.id && e.type === tfSpice);
-    const ss = sales.filter(s => s.shop === tfFrom && s.loadId === load.id && s.type === tfSpice);
+    const useLoadFilter = hasRealLoad(tfFrom, tfSpice);
+    const se = entries.filter(e => e.shop === tfFrom && e.type === tfSpice && (!useLoadFilter || e.loadId === load.id));
+    const ss = sales.filter(s => s.shop === tfFrom && s.type === tfSpice && (!useLoadFilter || s.loadId === load.id));
     const bought = se.reduce((s, e) => s + Number(e.qty), 0);
     const sold = ss.reduce((s, e) => s + Number(e.qty), 0);
     return Math.max(0, bought - sold);
@@ -401,8 +402,9 @@ function App() {
   const tfAvgPrice = (() => {
     if (!transferModal) return 0;
     const load = getLoad(tfFrom, tfSpice);
-    const se = entries.filter(e => e.shop === tfFrom && e.loadId === load.id && e.type === tfSpice);
-    const ss = sales.filter(s => s.shop === tfFrom && s.loadId === load.id && s.type === tfSpice);
+    const useLoadFilter = hasRealLoad(tfFrom, tfSpice);
+    const se = entries.filter(e => e.shop === tfFrom && e.type === tfSpice && (!useLoadFilter || e.loadId === load.id));
+    const ss = sales.filter(s => s.shop === tfFrom && s.type === tfSpice && (!useLoadFilter || s.loadId === load.id));
     const totalVal = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
     const soldVal = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
     const totalQty = se.reduce((s, e) => s + Number(e.qty), 0);
@@ -415,8 +417,11 @@ function App() {
   const handleTransfer = async () => {
     const qty = parseFloat(tfQty);
     const price = parseFloat(tfPrice);
-    if (!qty || qty <= 0 || qty > tfAvailableQty || tfFrom === tfTo) return;
+    if (!qty || qty <= 0 || tfFrom === tfTo) return;
     if (!price || price <= 0) return;
+    if (qty > tfAvailableQty) {
+      if (!confirm(`⚠️ Only ${tfAvailableQty.toFixed(2)} Kg available in ${tfFrom} but transferring ${qty.toFixed(2)} Kg.\n\nContinue anyway?`)) return;
+    }
 
     const fromLoad = getLoad(tfFrom, tfSpice);
     const toLoad = getLoad(tfTo, tfSpice);
