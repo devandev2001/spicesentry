@@ -47,10 +47,32 @@ function App() {
   const avgCardamom = totalCardamomQty > 0 ? (totalCardamomValue / totalCardamomQty).toFixed(2) : "0.00";
   const avgPepper = totalPepperQty > 0 ? (totalPepperValue / totalPepperQty).toFixed(2) : "0.00";
 
-  // Handlers
-  const handleAddEntry = (entry) => {
-    setEntries([{ ...entry, id: Date.now(), loadId: currentLoadId }, ...entries]);
+  // Replace this with your Google Apps Script Web App URL once you deploy it
+  const GOOGLE_SHEET_URL = 'YOUR_WEB_APP_URL_HERE';
+
+  const handleAddEntry = async (entry) => {
+    const newEntry = { ...entry, id: Date.now(), loadId: currentLoadId };
+    
+    // Update local state instantly (Optimistic UI)
+    setEntries([newEntry, ...entries]);
     setActiveTab('dashboard'); // Redirect to dashboard after adding
+
+    // Sync to Google Sheet if the URL is configured
+    if (GOOGLE_SHEET_URL !== 'YOUR_WEB_APP_URL_HERE') {
+      try {
+        await fetch(GOOGLE_SHEET_URL, {
+          method: 'POST',
+          mode: 'no-cors', // Bypasses CORS restrictions for simple POSTs
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(newEntry)
+        });
+        console.log("Successfully sent to Google Sheets!");
+      } catch (error) {
+        console.error("Error sending to Google Sheets:", error);
+      }
+    }
   };
 
   const handleDispatchLoad = () => {
