@@ -14,62 +14,80 @@ const SPICES = [
   { id: 'clove', label: 'Clove', color: 'var(--clove-main)' }
 ];
 
+// Google Apps Script web-app endpoint
+const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV94Yj_5HXKg2GwpFB8WPXwrtLZqt0HTAz9oBWs3TKxq7KtqypAQ/exec';
+
+function buildDefaultLoads() {
+  const initial = {};
+  SHOPS.forEach(shop => {
+    SPICES.forEach(spice => {
+      initial[`${shop}|${spice.id}`] = { id: Date.now().toString(), start: Date.now() };
+    });
+  });
+  return initial;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
-  
-  // Data State
-  const [entries, setEntries] = useState(() => {
-    const saved = localStorage.getItem('spice_entries');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [loading, setLoading] = useState(true);
 
-  const [sales, setSales] = useState(() => {
-    const saved = localStorage.getItem('spice_sales');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [shopLoads, setShopLoads] = useState(() => {
-    const saved = localStorage.getItem('spice_shop_loads');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Migrate old format (key = shop name) → new format (key = "shop|spice")
-      const firstKey = Object.keys(parsed)[0] || '';
-      if (firstKey && !firstKey.includes('|')) {
-        const migrated = {};
-        SHOPS.forEach(shop => {
-          SPICES.forEach(spice => {
-            migrated[`${shop}|${spice.id}`] = parsed[shop] || { id: Date.now().toString(), start: Date.now() };
-          });
-        });
-        return migrated;
-      }
-      return parsed;
-    }
-    const initial = {};
-    SHOPS.forEach(shop => {
-      SPICES.forEach(spice => {
-        initial[`${shop}|${spice.id}`] = { id: Date.now().toString(), start: Date.now() };
-      });
-    });
-    return initial;
-  });
+  // Data State — start empty, will be filled from Google Sheets
+  const [entries, setEntries] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [shopLoads, setShopLoads] = useState(buildDefaultLoads);
 
   // Helper to get the load for a specific shop + spice
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0', start: Date.now() };
 
-  // Save to local storage when changed
+  // ── Fetch ALL data from Google Sheets on mount ──
   useEffect(() => {
-    localStorage.setItem('spice_entries', JSON.stringify(entries));
-  }, [entries]);
+    let cancelled = false;
+    async function fetchFromSheets() {
+      try {
+        const res = await fetch(GSHEET_URL);
+        if (!res.ok) throw new Error('Network error');
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.entries)   setEntries(data.entries);
+        if (data.sales)     setSales(data.sales);
+        if (data.loads && Object.keys(data.loads).length > 0) {
+          setShopLoads(prev => ({ ...prev, ...data.loads }));
+        }
+        // Cache locally for offline fallback
+        localStorage.setItem('spice_entries', JSON.stringify(data.entries || []));
+        localStorage.setItem('spice_sales', JSON.stringify(data.sales || []));
+        if (data.loads) localStorage.setItem('spice_shop_loads', JSON.stringify(data.loads));
+      } catch (err) {
+        console.warn('Could not fetch from Google Sheets, using local cache:', err);
+        // Fallback to localStorage
+        const cachedEntries = localStorage.getItem('spice_entries');
+        const cachedSales   = localStorage.getItem('spice_sales');
+        const cachedLoads   = localStorage.getItem('spice_shop_loads');
+        if (cachedEntries) setEntries(JSON.parse(cachedEntries));
+        if (cachedSales)   setSales(JSON.parse(cachedSales));
+        if (cachedLoads)   setShopLoads(prev => ({ ...prev, ...JSON.parse(cachedLoads) }));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    fetchFromSheets();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Save to local storage as cache when data changes
+  useEffect(() => {
+    if (!loading) localStorage.setItem('spice_entries', JSON.stringify(entries));
+  }, [entries, loading]);
 
   useEffect(() => {
-    localStorage.setItem('spice_sales', JSON.stringify(sales));
-  }, [sales]);
+    if (!loading) localStorage.setItem('spice_sales', JSON.stringify(sales));
+  }, [sales, loading]);
 
   useEffect(() => {
-    localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
-  }, [shopLoads]);
+    if (!loading) localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
+  }, [shopLoads, loading]);
 
   // Derived state: per-spice stats for the selected shop
   const stats = SPICES.map(spice => {
@@ -150,9 +168,6 @@ function App() {
   }, Date.now());
   const daysSinceLoadStart = Math.max(1, differenceInDays(new Date(), new Date(oldestLoadStart)) + 1);
 
-  // Google Apps Script web-app endpoint (handles both entries & sales)
-  const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV94Yj_5HXKg2GwpFB8WPXwrtLZqt0HTAz9oBWs3TKxq7KtqypAQ/exec';
-
   const handleAddEntry = async (entry) => {
     const load = getLoad(entry.shop, entry.type);
     const newEntry = { 
@@ -229,10 +244,17 @@ function App() {
 
     if (remainingQty <= 0) {
       if (confirm(`No remaining ${spiceLabel} stock. Reset load anyway?`)) {
+        const newLoadId = Date.now().toString();
+        const newLoadStart = Date.now();
         setShopLoads(prev => ({
           ...prev,
-          [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
+          [`${selectedShop}|${spiceId}`]: { id: newLoadId, start: newLoadStart }
         }));
+        // Persist to Sheets
+        fetch(GSHEET_URL, {
+          method: 'POST',
+          body: JSON.stringify({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
+        }).catch(err => console.error("Error saving load reset:", err));
       }
       return;
     }
@@ -271,10 +293,30 @@ function App() {
       console.error("Error sending dispatch sale to Sheets:", error);
     }
 
+    const newLoadId = Date.now().toString();
+    const newLoadStart = Date.now();
+
     setShopLoads(prev => ({
       ...prev,
-      [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
+      [`${selectedShop}|${spiceId}`]: { id: newLoadId, start: newLoadStart }
     }));
+
+    // Persist load reset to Google Sheets
+    try {
+      await fetch(GSHEET_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'load',
+          shop: selectedShop,
+          spice: spiceId,
+          loadId: newLoadId,
+          start: newLoadStart,
+        }),
+      });
+    } catch (err) {
+      console.error("Error saving load reset to Sheets:", err);
+    }
+
     setDispatchModal(null);
     setDispatchPrice('');
     setActiveTab('dashboard');
@@ -377,6 +419,16 @@ function App() {
     setActiveTab('dashboard');
     setSelectedShop(tfTo);
   };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ width: 40, height: 40, border: '4px solid #e0e0e0', borderTop: '4px solid var(--cardamom-main, #4caf50)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <p style={{ color: '#888', fontSize: 14 }}>Loading from Google Sheets…</p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <>
