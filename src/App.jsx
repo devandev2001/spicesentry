@@ -1348,8 +1348,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all', 'purchase', 'sale'
-  const [pdfPages, setPdfPages] = useState(null); // array of page image data-URIs
-  const [pdfLoading, setPdfLoading] = useState(false); // loading spinner while generating
+  const [pdfPages, setPdfPages] = useState(null); // HTML report data for viewer
 
   // Merge purchases + sales, sort newest first
   const allRecords = [
@@ -1377,8 +1376,85 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
 
-  const generatePDF = async (mode = 'download') => {
-    if (mode === 'view') { setPdfLoading(true); setPdfPages(null); await new Promise(r => setTimeout(r, 50)); }
+  // ── Build report data for HTML viewer ──
+  const buildShopReportData = () => {
+    const R = (val) => `₹${val}`;
+    const dateFilter = (item) => {
+      if (dateFrom) { const from = new Date(dateFrom); from.setHours(0,0,0,0); if (new Date(item.date) < from) return false; }
+      if (dateTo) { const to = new Date(dateTo); to.setHours(23,59,59,999); if (new Date(item.date) > to) return false; }
+      return true;
+    };
+    const summary = spices.map(spice => {
+      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id && dateFilter(e));
+      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id && dateFilter(s));
+      const totalQty = se.reduce((s, e) => s + Number(e.qty), 0);
+      const totalBuyValue = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      const soldQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+      const soldValue = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      const remainingQty = Math.max(0, totalQty - soldQty);
+      const remainingValue = totalBuyValue - soldValue;
+      const avgBuy = remainingQty > 0 ? (remainingValue / remainingQty).toFixed(2) : (totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00');
+      const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
+      const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty) : null;
+      return { label: spice.label, color: spice.color, totalQty, avgBuy, soldQty, avgSell, remainingQty, remainingValue, profit };
+    }).filter(r => r.totalQty > 0 || r.soldQty > 0);
+
+    const totals = spices.reduce((acc, spice) => {
+      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
+      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
+      acc.totalBuyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      acc.totalSellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      acc.totalBought += se.reduce((s, e) => s + Number(e.qty), 0);
+      acc.totalSold += ss.reduce((s, e) => s + Number(e.qty), 0);
+      return acc;
+    }, { totalBought: 0, totalBuyValue: 0, totalSold: 0, totalSellValue: 0 });
+    const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
+
+    const purchases = entries.filter(e => e.shop === selectedShop && dateFilter(e)).sort((a, b) => new Date(b.date) - new Date(a.date));
+    const shopSales = sales.filter(s => s.shop === selectedShop && dateFilter(s)).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    return { shop: selectedShop, summary, totals: { ...totals, totalProfit }, purchases, sales: shopSales, dateFrom, dateTo };
+  };
+
+  const buildOverallReportData = () => {
+    const allShopData = shops.map(shop => {
+      const shopSummary = spices.map(spice => {
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id);
+        const totalQty = se.reduce((s, e) => s + Number(e.qty), 0);
+        const totalBuyValue = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        const soldQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+        const soldValue = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        const remainingQty = Math.max(0, totalQty - soldQty);
+        const remainingValue = totalBuyValue - soldValue;
+        const avgBuy = totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00';
+        const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
+        const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty) : null;
+        return { label: spice.label, color: spice.color, totalQty, avgBuy, soldQty, avgSell, remainingQty, remainingValue, profit };
+      }).filter(r => r.totalQty > 0 || r.soldQty > 0);
+
+      const totals = spices.reduce((acc, spice) => {
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id);
+        acc.totalBuyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        acc.totalSellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        acc.totalBought += se.reduce((s, e) => s + Number(e.qty), 0);
+        acc.totalSold += ss.reduce((s, e) => s + Number(e.qty), 0);
+        return acc;
+      }, { totalBought: 0, totalBuyValue: 0, totalSold: 0, totalSellValue: 0 });
+      const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
+
+      return { shop, summary: shopSummary, totals: { ...totals, totalProfit } };
+    }).filter(d => d.summary.length > 0);
+    return { shops: allShopData };
+  };
+
+  const viewReport = (type) => {
+    if (type === 'shop') setPdfPages({ type: 'shop', ...buildShopReportData() });
+    else setPdfPages({ type: 'overall', ...buildOverallReportData() });
+  };
+
+  const generatePDF = async () => {
     // ── Pre-load logo as base64 ──
     let logoBase64 = null;
     try {
@@ -1692,19 +1768,11 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
     }
 
-    if (mode === 'view') {
-      const blob = doc.output('blob');
-      const url = URL.createObjectURL(blob);
-      setPdfPages(url);
-      setPdfLoading(false);
-    } else {
-      doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
-    }
+    doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
   };
 
   // ── Overall Report (all shops) ──
-  const generateOverallPDF = async (mode = 'download') => {
-    if (mode === 'view') { setPdfLoading(true); setPdfPages(null); await new Promise(r => setTimeout(r, 50)); }
+  const generateOverallPDF = async () => {
     let logoBase64 = null;
     try {
       const img = new Image();
@@ -1880,14 +1948,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
     }
 
-    if (mode === 'view') {
-      const blob = doc.output('blob');
-      const url = URL.createObjectURL(blob);
-      setPdfPages(url);
-      setPdfLoading(false);
-    } else {
-      doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
-    }
+    doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
   };
 
   return (
@@ -1984,21 +2045,21 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
       <div className="glass-card history-buttons-row" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)' }} onClick={() => generatePDF('view')}>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)' }} onClick={() => viewReport('shop')}>
             <Eye size={18} />
             View {selectedShop} {(dateFrom || dateTo) ? '(Filtered)' : ''}
           </button>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)', opacity: 0.8 }} onClick={() => generatePDF('download')}>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)', opacity: 0.8 }} onClick={generatePDF}>
             <Download size={18} />
             Download
           </button>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)' }} onClick={() => generateOverallPDF('view')}>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)' }} onClick={() => viewReport('overall')}>
             <Eye size={18} />
             View Overall (All Shops)
           </button>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)', opacity: 0.8 }} onClick={() => generateOverallPDF('download')}>
+          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)', opacity: 0.8 }} onClick={generateOverallPDF}>
             <Download size={18} />
             Download
           </button>
@@ -2067,98 +2128,190 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         )}
       </div>
 
-      {/* ── Full-screen PDF viewer overlay (works on iOS + all browsers) ── */}
-      {(pdfLoading || pdfPages) && (
+      {/* ── Full-screen HTML Report Viewer ── */}
+      {pdfPages && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: 9999, background: 'rgba(0,0,0,0.95)',
+          zIndex: 9999, background: 'var(--bg-primary)',
           display: 'flex', flexDirection: 'column',
           animation: 'fadeIn 0.2s ease-in-out',
         }}>
+          {/* Header bar */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '0.75rem 1rem',
+            padding: '0.6rem 1rem',
             background: 'var(--card-bg)', borderBottom: '1px solid rgba(255,255,255,0.08)',
+            flexShrink: 0,
           }}>
             <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>
-              {pdfLoading ? 'Generating PDF…' : 'PDF Report'}
+              📊 {pdfPages.type === 'overall' ? 'Overall Report' : `${pdfPages.shop} Report`}
             </span>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {pdfPages && (
-                <a
-                  href={pdfPages}
-                  download="KVS_Report.pdf"
-                  style={{
-                    background: 'rgba(88,166,255,0.15)', border: '1px solid rgba(88,166,255,0.3)',
-                    color: '#58a6ff', borderRadius: 8, padding: '0.4rem 1rem',
-                    fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
-                    textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem',
-                  }}
-                >
-                  <Download size={14} /> Save
-                </a>
-              )}
-              <button
-                onClick={() => {
-                  if (pdfPages) URL.revokeObjectURL(pdfPages);
-                  setPdfPages(null); setPdfLoading(false);
-                }}
-                style={{
-                  background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.3)',
-                  color: '#f87171', borderRadius: 8, padding: '0.4rem 1rem',
-                  fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
-                }}
-              >
-                ✕ Close
-              </button>
+            <button
+              onClick={() => setPdfPages(null)}
+              style={{
+                background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.3)',
+                color: '#f87171', borderRadius: 8, padding: '0.4rem 1rem',
+                fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
+              }}
+            >
+              ✕ Close
+            </button>
+          </div>
+
+          {/* Scrollable report body */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', WebkitOverflowScrolling: 'touch' }}>
+            {/* Report title */}
+            <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+              <img src="/kvs-logo.png" alt="KVS" style={{ width: 56, height: 56, borderRadius: 12, marginBottom: '0.5rem' }} />
+              <h2 style={{ color: '#4caf50', fontWeight: 800, fontSize: '1.3rem', margin: 0 }}>KVS Spices & Traders</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.25rem 0' }}>
+                {pdfPages.type === 'overall' ? 'All Shops — Overall Report' : `${pdfPages.shop} — Stock & Sales Report`}
+              </p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
+                {format(new Date(), 'MMMM d, yyyy • h:mm a')}
+                {pdfPages.dateFrom || pdfPages.dateTo ? ` • Filtered: ${pdfPages.dateFrom ? format(new Date(pdfPages.dateFrom), 'dd MMM yyyy') : 'Start'} – ${pdfPages.dateTo ? format(new Date(pdfPages.dateTo), 'dd MMM yyyy') : 'Now'}` : ''}
+              </p>
+            </div>
+
+            {/* Render shop data — single shop or multiple */}
+            {(pdfPages.type === 'overall' ? pdfPages.shops : [pdfPages]).map((shopData, si) => (
+              <div key={si} style={{ marginBottom: '1.5rem' }}>
+                {pdfPages.type === 'overall' && (
+                  <h3 style={{ color: '#58a6ff', fontSize: '1.1rem', fontWeight: 700, borderLeft: '3px solid #58a6ff', paddingLeft: 10, marginBottom: '0.75rem' }}>
+                    {shopData.shop}
+                  </h3>
+                )}
+
+                {/* Stock Summary Table */}
+                {shopData.summary.length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <h4 style={{ color: '#4caf50', fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Stock Summary
+                    </h4>
+                    <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(30,38,50,0.8)' }}>
+                            {['Spice', 'Bought', 'Avg', 'Sold', 'Sell Avg', 'Balance', 'P&L'].map(h => (
+                              <th key={h} style={{ padding: '0.5rem 0.4rem', color: '#4caf50', fontWeight: 700, textAlign: h === 'Spice' ? 'left' : 'right', whiteSpace: 'nowrap', fontSize: '0.65rem' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shopData.summary.map((r, i) => (
+                            <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
+                              <td style={{ padding: '0.45rem 0.4rem', fontWeight: 700, color: r.color || '#fff', whiteSpace: 'nowrap' }}>{r.label}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.totalQty.toFixed(1)}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>₹{r.avgBuy}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.soldQty.toFixed(1)}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.avgSell === '-' ? '-' : `₹${r.avgSell}`}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700, color: '#fff' }}>{r.remainingQty.toFixed(1)}</td>
+                              <td style={{
+                                padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700,
+                                color: r.profit === null ? 'var(--text-secondary)' : r.profit >= 0 ? '#10b981' : '#f87171',
+                              }}>
+                                {r.profit === null ? '-' : `${r.profit >= 0 ? '+' : ''}₹${Math.round(r.profit).toLocaleString('en-IN')}`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Totals Card */}
+                {shopData.totals && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem',
+                  }}>
+                    {[
+                      { label: 'Total Invested', value: `₹${Math.round(shopData.totals.totalBuyValue).toLocaleString('en-IN')}`, color: '#fff' },
+                      { label: 'Total Sold', value: `₹${Math.round(shopData.totals.totalSellValue).toLocaleString('en-IN')}`, color: '#58a6ff' },
+                      { label: 'Remaining', value: `₹${Math.round(shopData.totals.totalBuyValue - shopData.totals.totalSellValue).toLocaleString('en-IN')}`, color: '#fff' },
+                      { label: 'Net Profit', value: `${shopData.totals.totalProfit >= 0 ? '+' : ''}₹${Math.round(shopData.totals.totalProfit).toLocaleString('en-IN')}`, color: shopData.totals.totalProfit >= 0 ? '#10b981' : '#f87171' },
+                    ].map((t, i) => (
+                      <div key={i} style={{
+                        background: 'rgba(22,27,34,0.8)', borderRadius: 10, padding: '0.6rem 0.75rem',
+                        border: '1px solid rgba(255,255,255,0.04)',
+                      }}>
+                        <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.2rem' }}>{t.label}</div>
+                        <div style={{ fontSize: '1rem', fontWeight: 800, color: t.color }}>{t.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Purchase Records (only for single shop view) */}
+                {pdfPages.type === 'shop' && shopData.purchases && shopData.purchases.length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <h4 style={{ color: '#58a6ff', fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Purchase Records ({shopData.purchases.length})
+                    </h4>
+                    <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(30,38,50,0.8)' }}>
+                            {['Date', 'Spice', 'Qty', 'Price/Kg', 'Total'].map(h => (
+                              <th key={h} style={{ padding: '0.5rem 0.4rem', color: '#58a6ff', fontWeight: 700, textAlign: h === 'Date' || h === 'Spice' ? 'left' : 'right', whiteSpace: 'nowrap', fontSize: '0.65rem' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shopData.purchases.map((e, i) => (
+                            <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
+                              <td style={{ padding: '0.4rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{format(new Date(e.date), 'dd MMM yy')}</td>
+                              <td style={{ padding: '0.4rem', fontWeight: 600, color: '#fff' }}>{e.type.replace('_', ' ')}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{Number(e.qty).toFixed(2)}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>₹{Number(e.price).toLocaleString('en-IN')}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', fontWeight: 700, color: '#fff' }}>₹{Math.round(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sale Records (only for single shop view) */}
+                {pdfPages.type === 'shop' && shopData.sales && shopData.sales.length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <h4 style={{ color: '#10b981', fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Sale Records ({shopData.sales.length})
+                    </h4>
+                    <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(30,38,50,0.8)' }}>
+                            {['Date', 'Spice', 'Qty', 'Sell/Kg', 'Total', 'Buyer'].map(h => (
+                              <th key={h} style={{ padding: '0.5rem 0.4rem', color: '#10b981', fontWeight: 700, textAlign: h === 'Date' || h === 'Spice' || h === 'Buyer' ? 'left' : 'right', whiteSpace: 'nowrap', fontSize: '0.65rem' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shopData.sales.map((s, i) => (
+                            <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
+                              <td style={{ padding: '0.4rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{format(new Date(s.date), 'dd MMM yy')}</td>
+                              <td style={{ padding: '0.4rem', fontWeight: 600, color: '#fff' }}>{s.type.replace('_', ' ')}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{Number(s.qty).toFixed(2)}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>₹{Number(s.sellPrice).toLocaleString('en-IN')}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', fontWeight: 700, color: '#10b981' }}>₹{Math.round(Number(s.qty) * Number(s.sellPrice)).toLocaleString('en-IN')}</td>
+                              <td style={{ padding: '0.4rem', color: 'var(--text-secondary)' }}>{s.buyerName || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Footer */}
+            <div style={{ textAlign: 'center', padding: '1rem 0 2rem', borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: '0.5rem' }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem' }}>KVS Spices & Traders • Generated by SpiceSentry</p>
             </div>
           </div>
-          {pdfLoading ? (
-            <div style={{
-              flex: 1, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center', gap: '1rem',
-            }}>
-              <div style={{
-                width: 44, height: 44, borderRadius: '50%',
-                border: '3px solid rgba(88,166,255,0.2)',
-                borderTopColor: '#58a6ff',
-                animation: 'spin 0.8s linear infinite',
-              }} />
-              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Preparing your report…</span>
-            </div>
-          ) : (
-            <object
-              data={pdfPages}
-              type="application/pdf"
-              style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }}
-            >
-              {/* Fallback for browsers that can't render PDF inline (e.g. some iOS versions) */}
-              <div style={{
-                flex: 1, display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', gap: '1rem',
-                padding: '2rem', textAlign: 'center',
-              }}>
-                <p style={{ color: 'var(--text-primary)', fontSize: '1rem', fontWeight: 600 }}>
-                  Your PDF is ready!
-                </p>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                  Your browser can't preview PDFs inline. Tap the button below to open it.
-                </p>
-                <a
-                  href={pdfPages}
-                  download="KVS_Report.pdf"
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                    background: 'var(--primary-accent)', color: '#fff',
-                    padding: '0.75rem 1.5rem', borderRadius: 12,
-                    fontWeight: 700, fontSize: '1rem', textDecoration: 'none',
-                  }}
-                >
-                  <Download size={20} /> Download PDF
-                </a>
-              </div>
-            </object>
-          )}
         </div>
       )}
 
