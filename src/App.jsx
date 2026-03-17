@@ -1167,17 +1167,18 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
 
   // Compute stock for the selected shop & spice dynamically
   const currentLoad = shopLoads[`${shop}|${type}`] || { id: '0' };
+  const useLoadFilter = currentLoad._fromSheet;
   const boughtQty = entries
-    .filter(e => e.shop === shop && e.loadId === currentLoad.id && e.type === type)
+    .filter(e => e.shop === shop && e.type === type && (!useLoadFilter || e.loadId === currentLoad.id))
     .reduce((sum, e) => sum + Number(e.qty), 0);
   const boughtValue = entries
-    .filter(e => e.shop === shop && e.loadId === currentLoad.id && e.type === type)
+    .filter(e => e.shop === shop && e.type === type && (!useLoadFilter || e.loadId === currentLoad.id))
     .reduce((sum, e) => sum + Number(e.qty) * Number(e.price), 0);
   const soldQty = sales
-    .filter(s => s.shop === shop && s.loadId === currentLoad.id && s.type === type)
+    .filter(s => s.shop === shop && s.type === type && (!useLoadFilter || s.loadId === currentLoad.id))
     .reduce((sum, s) => sum + Number(s.qty), 0);
   const soldValue = sales
-    .filter(s => s.shop === shop && s.loadId === currentLoad.id && s.type === type)
+    .filter(s => s.shop === shop && s.type === type && (!useLoadFilter || s.loadId === currentLoad.id))
     .reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
   const availableQty = Math.max(0, boughtQty - soldQty);
 
@@ -1188,7 +1189,6 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!qty || !sellPrice) return alert('Please enter quantity and sell price.');
-    if (parseFloat(qty) > availableQty) return alert(`Only ${availableQty.toFixed(2)} Kg available in ${shop}.`);
     onSell({ shop, type, qty: parseFloat(qty), sellPrice: parseFloat(sellPrice), buyerName });
     setQty('');
     setSellPrice('');
