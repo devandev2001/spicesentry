@@ -58,6 +58,12 @@ function App() {
   // Helper to get the load for a specific shop + spice
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0', start: Date.now() };
 
+  // Whether a real load exists from the Sheets (not just a random default)
+  const hasRealLoad = (shop, spiceId) => {
+    const load = shopLoads[`${shop}|${spiceId}`];
+    return load && load._fromSheet;
+  };
+
   // ── Reusable: fetch data from Google Sheets ──
   const refreshFromSheets = async (silent = false) => {
     if (!silent) setSyncing(true);
@@ -72,14 +78,18 @@ function App() {
       // Build loads: use sheet loads if available, otherwise derive from entries
       let resolvedLoads = {};
       if (data.loads && Object.keys(data.loads).length > 0) {
-        resolvedLoads = data.loads;
+        // Mark loads from sheet so we know to filter by loadId
+        Object.entries(data.loads).forEach(([key, val]) => {
+          resolvedLoads[key] = { ...val, _fromSheet: true };
+        });
       } else {
+        // No loads in sheet — derive from entries but mark as NOT from sheet
         const allItems = [...(data.entries || []), ...(data.sales || [])];
         allItems.forEach(item => {
           if (item.shop && item.type && item.loadId) {
             const key = `${item.shop}|${item.type}`;
             if (!resolvedLoads[key]) {
-              resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now() };
+              resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now(), _fromSheet: false };
             }
           }
         });
@@ -124,13 +134,14 @@ function App() {
   // Derived state: per-spice stats for the selected shop
   const stats = SPICES.map(spice => {
     const load = getLoad(selectedShop, spice.id);
-    const spiceEntries = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spice.id);
+    const useLoadFilter = hasRealLoad(selectedShop, spice.id);
+    const spiceEntries = entries.filter(e => e.shop === selectedShop && e.type === spice.id && (!useLoadFilter || e.loadId === load.id));
     const totalQty = spiceEntries.reduce((sum, e) => sum + Number(e.qty), 0);
     const totalValue = spiceEntries.reduce((sum, e) => sum + (Number(e.qty) * Number(e.price)), 0);
     const originalAvgBuy = totalQty > 0 ? +(totalValue / totalQty).toFixed(2) : 0;
 
     // Sales for this shop + spice in the current load
-    const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spice.id);
+    const spiceSales = sales.filter(s => s.shop === selectedShop && s.type === spice.id && (!useLoadFilter || s.loadId === load.id));
     const soldQty   = spiceSales.reduce((sum, s) => sum + Number(s.qty), 0);
     const soldValue = spiceSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
     const avgSellPrice = soldQty > 0 ? +(soldValue / soldQty).toFixed(2) : null;
@@ -166,10 +177,11 @@ function App() {
     let grandSoldQty = 0;
     const perShop = SHOPS.map(shop => {
       const load = getLoad(shop, spice.id);
-      const se = entries.filter(e => e.shop === shop && e.loadId === load.id && e.type === spice.id);
+      const useLoadFilter = hasRealLoad(shop, spice.id);
+      const se = entries.filter(e => e.shop === shop && e.type === spice.id && (!useLoadFilter || e.loadId === load.id));
       const qty = se.reduce((s, e) => s + Number(e.qty), 0);
       const val = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
-      const shopSales = sales.filter(s => s.shop === shop && s.loadId === load.id && s.type === spice.id);
+      const shopSales = sales.filter(s => s.shop === shop && s.type === spice.id && (!useLoadFilter || s.loadId === load.id));
       const soldQty = shopSales.reduce((sum, s) => sum + Number(s.qty), 0);
       const soldVal = shopSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
       const remainingQty = Math.max(0, qty - soldQty);
@@ -209,12 +221,14 @@ function App() {
       totalValue: entry.qty * entry.price 
     };
     
-    setEntries([newEntry, ...entries]);
+    setEntries(prev => [newEntry, ...prev]);
     setActiveTab('dashboard');
     setSelectedShop(entry.shop);
 
     try {
       await postToSheet({ ...newEntry, kind: 'entry' });
+      // Refresh from Sheets so loadIds & data stay in sync
+      await refreshFromSheets(true);
     } catch (error) {
       console.error("Error sending to Google Sheets:", error);
     }
@@ -231,12 +245,14 @@ function App() {
       date: new Date().toISOString(),
     };
 
-    setSales([newSale, ...sales]);
+    setSales(prev => [newSale, ...prev]);
     setActiveTab('dashboard');
     setSelectedShop(sale.shop);
 
     try {
       await postToSheet(newSale);
+      // Refresh from Sheets so loadIds & data stay in sync
+      await refreshFromSheets(true);
     } catch (error) {
       console.error("Error sending sale to Google Sheets:", error);
     }
