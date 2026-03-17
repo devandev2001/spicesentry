@@ -29,13 +29,32 @@ function App() {
   
   const [shopLoads, setShopLoads] = useState(() => {
     const saved = localStorage.getItem('spice_shop_loads');
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Migrate old format (key = shop name) → new format (key = "shop|spice")
+      const firstKey = Object.keys(parsed)[0] || '';
+      if (firstKey && !firstKey.includes('|')) {
+        const migrated = {};
+        SHOPS.forEach(shop => {
+          SPICES.forEach(spice => {
+            migrated[`${shop}|${spice.id}`] = parsed[shop] || { id: Date.now().toString(), start: Date.now() };
+          });
+        });
+        return migrated;
+      }
+      return parsed;
+    }
     const initial = {};
     SHOPS.forEach(shop => {
-      initial[shop] = { id: Date.now().toString(), start: Date.now() };
+      SPICES.forEach(spice => {
+        initial[`${shop}|${spice.id}`] = { id: Date.now().toString(), start: Date.now() };
+      });
     });
     return initial;
   });
+
+  // Helper to get the load for a specific shop + spice
+  const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0', start: Date.now() };
 
   // Save to local storage when changed
   useEffect(() => {
@@ -50,22 +69,16 @@ function App() {
     localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
   }, [shopLoads]);
 
-  // Derived state for the CURRENT load and SELECTED shop
-  const currentShopLoad = shopLoads[selectedShop] || { id: '0', start: Date.now() };
-  
-  // Filter entries that belong to the current load of the selected shop
-  const shopEntries = entries.filter(e => 
-    e.shop === selectedShop && e.loadId === currentShopLoad.id
-  );
-
+  // Derived state: per-spice stats for the selected shop
   const stats = SPICES.map(spice => {
-    const spiceEntries = shopEntries.filter(e => e.type === spice.id);
+    const load = getLoad(selectedShop, spice.id);
+    const spiceEntries = entries.filter(e => e.shop === selectedShop && e.loadId === load.id && e.type === spice.id);
     const totalQty = spiceEntries.reduce((sum, e) => sum + Number(e.qty), 0);
     const totalValue = spiceEntries.reduce((sum, e) => sum + (Number(e.qty) * Number(e.price)), 0);
     const originalAvgBuy = totalQty > 0 ? +(totalValue / totalQty).toFixed(2) : 0;
 
     // Sales for this shop + spice in the current load
-    const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === currentShopLoad.id && s.type === spice.id);
+    const spiceSales = sales.filter(s => s.shop === selectedShop && s.loadId === load.id && s.type === spice.id);
     const soldQty   = spiceSales.reduce((sum, s) => sum + Number(s.qty), 0);
     const soldValue = spiceSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
     const avgSellPrice = soldQty > 0 ? +(soldValue / soldQty).toFixed(2) : null;
@@ -100,7 +113,7 @@ function App() {
     let grandSoldValue = 0;
     let grandSoldQty = 0;
     const perShop = SHOPS.map(shop => {
-      const load = shopLoads[shop] || { id: '0' };
+      const load = getLoad(shop, spice.id);
       const se = entries.filter(e => e.shop === shop && e.loadId === load.id && e.type === spice.id);
       const qty = se.reduce((s, e) => s + Number(e.qty), 0);
       const val = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
@@ -128,17 +141,22 @@ function App() {
     };
   });
 
-  const daysSinceLoadStart = Math.max(1, differenceInDays(new Date(), new Date(currentShopLoad.start)) + 1);
+  // Days since the oldest active spice load started for this shop
+  const oldestLoadStart = SPICES.reduce((oldest, spice) => {
+    const load = getLoad(selectedShop, spice.id);
+    return load.start < oldest ? load.start : oldest;
+  }, Date.now());
+  const daysSinceLoadStart = Math.max(1, differenceInDays(new Date(), new Date(oldestLoadStart)) + 1);
 
   const LOCAL_BACKEND_URL = 'http://localhost:3001/api/add-entry';
   const LOCAL_SALE_URL    = 'http://localhost:3001/api/add-sale';
 
   const handleAddEntry = async (entry) => {
-    const shopLoad = shopLoads[entry.shop];
+    const load = getLoad(entry.shop, entry.type);
     const newEntry = { 
       ...entry, 
       id: Date.now(), 
-      loadId: shopLoad.id, 
+      loadId: load.id, 
       totalValue: entry.qty * entry.price 
     };
     
@@ -158,11 +176,11 @@ function App() {
   };
 
   const handleAddSale = async (sale) => {
-    const shopLoad = shopLoads[sale.shop];
+    const load = getLoad(sale.shop, sale.type);
     const newSale = {
       ...sale,
       id: Date.now(),
-      loadId: shopLoad.id,
+      loadId: load.id,
       totalValue: sale.qty * sale.sellPrice,
       kind: 'sale',
       date: new Date().toISOString(),
@@ -183,11 +201,12 @@ function App() {
     }
   };
 
-  const handleDispatchLoad = () => {
-    if (confirm(`Are you sure you want to dispatch the current load for ${selectedShop}? This will reset its dashboard averages.`)) {
+  const handleDispatchLoad = (spiceId) => {
+    const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
+    if (confirm(`Dispatch ${spiceLabel} from ${selectedShop}? This will reset only ${spiceLabel} data for this branch.`)) {
       setShopLoads(prev => ({
         ...prev,
-        [selectedShop]: { id: Date.now().toString(), start: Date.now() }
+        [`${selectedShop}|${spiceId}`]: { id: Date.now().toString(), start: Date.now() }
       }));
       setActiveTab('dashboard');
     }
@@ -397,19 +416,35 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                 sold {spice.soldQty.toFixed(2)} Kg
               </p>
             )}
+            {spice.totalQty > 0 && (
+              <button
+                onClick={() => onDispatch(spice.id)}
+                style={{
+                  marginTop: '0.5rem',
+                  width: '100%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
+                  padding: '0.35rem 0.5rem',
+                  borderRadius: 8,
+                  border: '1px solid rgba(248,113,113,0.3)',
+                  background: 'rgba(248,113,113,0.08)',
+                  color: 'var(--danger)',
+                  fontSize: '0.65rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Truck size={12} />
+                Dispatch
+              </button>
+            )}
           </div>
         ))}
       </div>
 
-      <div className="glass-card" style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <button className="btn btn-danger" onClick={onDispatch}>
-          <Truck size={20} />
-          Dispatch {selectedShop} Load
-        </button>
-        <p className="subtitle" style={{ fontSize: '0.75rem', textAlign: 'center' }}>
-          Dispatching resets averages ONLY for the selected branch.
-        </p>
-      </div>
+      <p className="subtitle" style={{ fontSize: '0.7rem', textAlign: 'center', marginTop: '0.75rem' }}>
+        Dispatching resets data only for that spice in {selectedShop}.
+      </p>
     </div>
   );
 }
@@ -515,7 +550,7 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
   const selectedSpice = spices.find(s => s.id === type);
 
   // Compute stock for the selected shop & spice dynamically
-  const currentLoad = shopLoads[shop] || { id: '0' };
+  const currentLoad = shopLoads[`${shop}|${type}`] || { id: '0' };
   const boughtQty = entries
     .filter(e => e.shop === shop && e.loadId === currentLoad.id && e.type === type)
     .reduce((sum, e) => sum + Number(e.qty), 0);
