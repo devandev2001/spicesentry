@@ -17,6 +17,14 @@ const SPICES = [
 // Google Apps Script web-app endpoint
 const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV94Yj_5HXKg2GwpFB8WPXwrtLZqt0HTAz9oBWs3TKxq7KtqypAQ/exec';
 
+// Helper: Send data to Google Apps Script via GET with payload as URL param
+// (Google Apps Script redirects POST to a URL that only accepts GET,
+//  so we encode the payload in a query parameter instead)
+function postToSheet(payload) {
+  const url = GSHEET_URL + '?data=' + encodeURIComponent(JSON.stringify(payload));
+  return fetch(url, { redirect: 'follow' }).catch(err => console.error('Sheet sync error:', err));
+}
+
 function buildDefaultLoads() {
   const initial = {};
   SHOPS.forEach(shop => {
@@ -200,10 +208,7 @@ function App() {
     setSelectedShop(entry.shop);
 
     try {
-      await fetch(GSHEET_URL, {
-        method: 'POST',
-        body: JSON.stringify({ ...newEntry, kind: 'entry' }),
-      });
+      await postToSheet({ ...newEntry, kind: 'entry' });
     } catch (error) {
       console.error("Error sending to Google Sheets:", error);
     }
@@ -225,10 +230,7 @@ function App() {
     setSelectedShop(sale.shop);
 
     try {
-      await fetch(GSHEET_URL, {
-        method: 'POST',
-        body: JSON.stringify(newSale),
-      });
+      await postToSheet(newSale);
     } catch (error) {
       console.error("Error sending sale to Google Sheets:", error);
     }
@@ -237,12 +239,18 @@ function App() {
   const handleDeleteEntry = (id) => {
     if (confirm('Delete this purchase entry?')) {
       setEntries(prev => prev.filter(e => e.id !== id));
+      // Delete from Google Sheets
+      postToSheet({ kind: 'delete_entry', id: id.toString() })
+        .catch(err => console.error("Error deleting entry from Sheets:", err));
     }
   };
 
   const handleDeleteSale = (id) => {
     if (confirm('Delete this sale entry?')) {
       setSales(prev => prev.filter(s => s.id !== id));
+      // Delete from Google Sheets
+      postToSheet({ kind: 'delete_sale', id: id.toString() })
+        .catch(err => console.error("Error deleting sale from Sheets:", err));
     }
   };
 
@@ -269,10 +277,8 @@ function App() {
           [`${selectedShop}|${spiceId}`]: { id: newLoadId, start: newLoadStart }
         }));
         // Persist to Sheets
-        fetch(GSHEET_URL, {
-          method: 'POST',
-          body: JSON.stringify({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
-        }).catch(err => console.error("Error saving load reset:", err));
+        postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart })
+          .catch(err => console.error("Error saving load reset:", err));
       }
       return;
     }
@@ -303,10 +309,7 @@ function App() {
     setSales(prev => [dispatchSale, ...prev]);
 
     try {
-      await fetch(GSHEET_URL, {
-        method: 'POST',
-        body: JSON.stringify(dispatchSale),
-      });
+      await postToSheet(dispatchSale);
     } catch (error) {
       console.error("Error sending dispatch sale to Sheets:", error);
     }
@@ -321,15 +324,12 @@ function App() {
 
     // Persist load reset to Google Sheets
     try {
-      await fetch(GSHEET_URL, {
-        method: 'POST',
-        body: JSON.stringify({
-          kind: 'load',
-          shop: selectedShop,
-          spice: spiceId,
-          loadId: newLoadId,
-          start: newLoadStart,
-        }),
+      await postToSheet({
+        kind: 'load',
+        shop: selectedShop,
+        spice: spiceId,
+        loadId: newLoadId,
+        start: newLoadStart,
       });
     } catch (err) {
       console.error("Error saving load reset to Sheets:", err);
@@ -426,8 +426,8 @@ function App() {
     // Sync to Google Sheets
     try {
       await Promise.all([
-        fetch(GSHEET_URL, { method: 'POST', body: JSON.stringify(transferOut) }),
-        fetch(GSHEET_URL, { method: 'POST', body: JSON.stringify({ ...transferIn, kind: 'entry' }) }),
+        postToSheet(transferOut),
+        postToSheet({ ...transferIn, kind: 'entry' }),
       ]);
     } catch (err) {
       console.error("Error syncing transfer to Sheets:", err);
