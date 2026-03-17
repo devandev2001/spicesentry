@@ -4,7 +4,7 @@ import { format, differenceInDays } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const SHOPS = ['KVS Anachal', '20 Acre', 'Kallar'];
+const SHOPS = ['20 Acre', 'Anachal', 'Kallar'];
 const SPICES = [
   { id: 'cardamom', label: 'Cardamom', color: 'var(--cardamom-main)' },
   { id: 'pepper', label: 'Pepper', color: 'var(--pepper-main)' },
@@ -65,6 +65,12 @@ function App() {
   };
 
   // ── Reusable: fetch data from Google Sheets ──
+  // Normalize legacy shop names (e.g. "KVS Anachal" → "Anachal")
+  const normalizeShop = (item) => {
+    if (item.shop === 'KVS Anachal') item.shop = 'Anachal';
+    return item;
+  };
+
   const refreshFromSheets = async (silent = false) => {
     if (!silent) setSyncing(true);
     try {
@@ -72,19 +78,20 @@ function App() {
       if (!res.ok) throw new Error('Network error ' + res.status);
       const data = await res.json();
 
-      if (data.entries) setEntries(data.entries);
-      if (data.sales)  setSales(data.sales);
+      if (data.entries) setEntries(data.entries.map(normalizeShop));
+      if (data.sales)  setSales(data.sales.map(normalizeShop));
 
       // Build loads: use sheet loads if available, otherwise derive from entries
       let resolvedLoads = {};
       if (data.loads && Object.keys(data.loads).length > 0) {
         // Mark loads from sheet so we know to filter by loadId
         Object.entries(data.loads).forEach(([key, val]) => {
-          resolvedLoads[key] = { ...val, _fromSheet: true };
+          const normKey = key.replace('KVS Anachal', 'Anachal');
+          resolvedLoads[normKey] = { ...val, _fromSheet: true };
         });
       } else {
         // No loads in sheet — derive from entries but mark as NOT from sheet
-        const allItems = [...(data.entries || []), ...(data.sales || [])];
+        const allItems = [...(data.entries || []).map(normalizeShop), ...(data.sales || []).map(normalizeShop)];
         allItems.forEach(item => {
           if (item.shop && item.type && item.loadId) {
             const key = `${item.shop}|${item.type}`;
