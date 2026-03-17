@@ -346,12 +346,6 @@ function App() {
     };
     setSales(prev => [dispatchSale, ...prev]);
 
-    try {
-      await postToSheet(dispatchSale);
-    } catch (error) {
-      console.error("Error sending dispatch sale to Sheets:", error);
-    }
-
     const newLoadId = Date.now().toString();
     const newLoadStart = Date.now();
 
@@ -360,24 +354,18 @@ function App() {
       [`${selectedShop}|${spiceId}`]: { id: newLoadId, start: newLoadStart }
     }));
 
-    // Persist load reset to Google Sheets
-    try {
-      await postToSheet({
-        kind: 'load',
-        shop: selectedShop,
-        spice: spiceId,
-        loadId: newLoadId,
-        start: newLoadStart,
-      });
-    } catch (err) {
-      console.error("Error saving load reset to Sheets:", err);
-    }
-
+    // Navigate instantly (local state already updated)
     setDispatchModal(null);
     setDispatchPrice('');
     goTo('dashboard');
-    // Refresh from Sheets so everything stays in sync
-    await refreshFromSheets(true);
+
+    // Sync to Google Sheets in the background
+    Promise.all([
+      postToSheet(dispatchSale),
+      postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
+    ])
+      .then(() => refreshFromSheets(true))
+      .catch(err => console.error("Error syncing dispatch to Sheets:", err));
   };
 
   // ── Transfer Modal ──
@@ -468,21 +456,18 @@ function App() {
     setSales(prev => [transferOut, ...prev]);
     setEntries(prev => [transferIn, ...prev]);
 
-    // Sync to Google Sheets
-    try {
-      await Promise.all([
-        postToSheet(transferOut),
-        postToSheet({ ...transferIn, kind: 'entry' }),
-      ]);
-    } catch (err) {
-      console.error("Error syncing transfer to Sheets:", err);
-    }
-
+    // Navigate instantly (local state already updated)
     setTransferModal(false);
     goTo('dashboard');
     setSelectedShop(tfTo);
-    // Refresh from Sheets so everything stays in sync
-    await refreshFromSheets(true);
+
+    // Sync to Google Sheets in the background
+    Promise.all([
+      postToSheet(transferOut),
+      postToSheet({ ...transferIn, kind: 'entry' }),
+    ])
+      .then(() => refreshFromSheets(true))
+      .catch(err => console.error("Error syncing transfer to Sheets:", err));
   };
 
   return (
