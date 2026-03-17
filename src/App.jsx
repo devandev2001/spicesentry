@@ -1348,7 +1348,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all', 'purchase', 'sale'
-  const [pdfViewUrl, setPdfViewUrl] = useState(null); // for inline PDF viewer (iOS-safe)
+  const [pdfPages, setPdfPages] = useState(null); // array of page image data-URIs
   const [pdfLoading, setPdfLoading] = useState(false); // loading spinner while generating
 
   // Merge purchases + sales, sort newest first
@@ -1378,7 +1378,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
 
   const generatePDF = async (mode = 'download') => {
-    if (mode === 'view') { setPdfLoading(true); setPdfViewUrl(null); await new Promise(r => setTimeout(r, 50)); }
+    if (mode === 'view') { setPdfLoading(true); setPdfPages(null); await new Promise(r => setTimeout(r, 50)); }
     // ── Pre-load logo as base64 ──
     let logoBase64 = null;
     try {
@@ -1693,8 +1693,9 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }
 
     if (mode === 'view') {
-      const dataUri = doc.output('datauristring');
-      setPdfViewUrl(dataUri);
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      setPdfPages(url);
       setPdfLoading(false);
     } else {
       doc.save(`KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
@@ -1703,7 +1704,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   // ── Overall Report (all shops) ──
   const generateOverallPDF = async (mode = 'download') => {
-    if (mode === 'view') { setPdfLoading(true); setPdfViewUrl(null); await new Promise(r => setTimeout(r, 50)); }
+    if (mode === 'view') { setPdfLoading(true); setPdfPages(null); await new Promise(r => setTimeout(r, 50)); }
     let logoBase64 = null;
     try {
       const img = new Image();
@@ -1880,8 +1881,9 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }
 
     if (mode === 'view') {
-      const dataUri = doc.output('datauristring');
-      setPdfViewUrl(dataUri);
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      setPdfPages(url);
       setPdfLoading(false);
     } else {
       doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
@@ -2065,8 +2067,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         )}
       </div>
 
-      {/* ── Full-screen PDF viewer overlay (iOS-safe, no popup) ── */}
-      {(pdfLoading || pdfViewUrl) && (
+      {/* ── Full-screen PDF viewer overlay (works on iOS + all browsers) ── */}
+      {(pdfLoading || pdfPages) && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           zIndex: 9999, background: 'rgba(0,0,0,0.95)',
@@ -2081,16 +2083,35 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
             <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>
               {pdfLoading ? 'Generating PDF…' : 'PDF Report'}
             </span>
-            <button
-              onClick={() => { setPdfViewUrl(null); setPdfLoading(false); }}
-              style={{
-                background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.3)',
-                color: '#f87171', borderRadius: 8, padding: '0.4rem 1rem',
-                fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
-              }}
-            >
-              ✕ Close
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              {pdfPages && (
+                <a
+                  href={pdfPages}
+                  download="KVS_Report.pdf"
+                  style={{
+                    background: 'rgba(88,166,255,0.15)', border: '1px solid rgba(88,166,255,0.3)',
+                    color: '#58a6ff', borderRadius: 8, padding: '0.4rem 1rem',
+                    fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
+                    textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem',
+                  }}
+                >
+                  <Download size={14} /> Save
+                </a>
+              )}
+              <button
+                onClick={() => {
+                  if (pdfPages) URL.revokeObjectURL(pdfPages);
+                  setPdfPages(null); setPdfLoading(false);
+                }}
+                style={{
+                  background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.3)',
+                  color: '#f87171', borderRadius: 8, padding: '0.4rem 1rem',
+                  fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
+                }}
+              >
+                ✕ Close
+              </button>
+            </div>
           </div>
           {pdfLoading ? (
             <div style={{
@@ -2106,11 +2127,37 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Preparing your report…</span>
             </div>
           ) : (
-            <iframe
-              src={pdfViewUrl}
-              title="PDF Report"
-              style={{ flex: 1, border: 'none', width: '100%', background: '#525659' }}
-            />
+            <object
+              data={pdfPages}
+              type="application/pdf"
+              style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }}
+            >
+              {/* Fallback for browsers that can't render PDF inline (e.g. some iOS versions) */}
+              <div style={{
+                flex: 1, display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', gap: '1rem',
+                padding: '2rem', textAlign: 'center',
+              }}>
+                <p style={{ color: 'var(--text-primary)', fontSize: '1rem', fontWeight: 600 }}>
+                  Your PDF is ready!
+                </p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  Your browser can't preview PDFs inline. Tap the button below to open it.
+                </p>
+                <a
+                  href={pdfPages}
+                  download="KVS_Report.pdf"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                    background: 'var(--primary-accent)', color: '#fff',
+                    padding: '0.75rem 1.5rem', borderRadius: 12,
+                    fontWeight: 700, fontSize: '1rem', textDecoration: 'none',
+                  }}
+                >
+                  <Download size={20} /> Download PDF
+                </a>
+              </div>
+            </object>
           )}
         </div>
       )}
@@ -2120,5 +2167,3 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 }
 
 export default App;
-
-
