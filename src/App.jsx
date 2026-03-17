@@ -38,82 +38,88 @@ function buildDefaultLoads() {
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
-  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
 
-  // Data State — start empty, will be filled from Google Sheets
-  const [entries, setEntries] = useState([]);
-  const [sales, setSales] = useState([]);
-  const [shopLoads, setShopLoads] = useState(buildDefaultLoads);
+  // Data State — load from localStorage INSTANTLY, then refresh from Sheets
+  const [entries, setEntries] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('spice_entries') || '[]'); } catch { return []; }
+  });
+  const [sales, setSales] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('spice_sales') || '[]'); } catch { return []; }
+  });
+  const [shopLoads, setShopLoads] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem('spice_shop_loads') || '{}');
+      return Object.keys(cached).length > 0 ? { ...buildDefaultLoads(), ...cached } : buildDefaultLoads();
+    } catch { return buildDefaultLoads(); }
+  });
 
   // Helper to get the load for a specific shop + spice
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0', start: Date.now() };
 
-  // ── Fetch ALL data from Google Sheets on mount ──
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchFromSheets() {
-      try {
-        const res = await fetch(GSHEET_URL, { redirect: 'follow' });
-        if (!res.ok) throw new Error('Network error ' + res.status);
-        const data = await res.json();
-        if (cancelled) return;
+  // ── Reusable: fetch data from Google Sheets ──
+  const refreshFromSheets = async (silent = false) => {
+    if (!silent) setSyncing(true);
+    try {
+      const res = await fetch(GSHEET_URL, { redirect: 'follow' });
+      if (!res.ok) throw new Error('Network error ' + res.status);
+      const data = await res.json();
 
-        if (data.entries)   setEntries(data.entries);
-        if (data.sales)     setSales(data.sales);
+      if (data.entries) setEntries(data.entries);
+      if (data.sales)  setSales(data.sales);
 
-        // Build loads: use sheet loads if available, otherwise derive from entries
-        let resolvedLoads = {};
-        if (data.loads && Object.keys(data.loads).length > 0) {
-          resolvedLoads = data.loads;
-        } else {
-          // Derive loads from the most recent loadId per shop+spice in entries
-          const allItems = [...(data.entries || []), ...(data.sales || [])];
-          allItems.forEach(item => {
-            if (item.shop && item.type && item.loadId) {
-              const key = `${item.shop}|${item.type}`;
-              if (!resolvedLoads[key]) {
-                resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now() };
-              }
+      // Build loads: use sheet loads if available, otherwise derive from entries
+      let resolvedLoads = {};
+      if (data.loads && Object.keys(data.loads).length > 0) {
+        resolvedLoads = data.loads;
+      } else {
+        const allItems = [...(data.entries || []), ...(data.sales || [])];
+        allItems.forEach(item => {
+          if (item.shop && item.type && item.loadId) {
+            const key = `${item.shop}|${item.type}`;
+            if (!resolvedLoads[key]) {
+              resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now() };
             }
-          });
-        }
-        if (Object.keys(resolvedLoads).length > 0) {
-          setShopLoads(prev => ({ ...prev, ...resolvedLoads }));
-        }
-
-        // Cache locally for offline fallback
-        localStorage.setItem('spice_entries', JSON.stringify(data.entries || []));
-        localStorage.setItem('spice_sales', JSON.stringify(data.sales || []));
-        localStorage.setItem('spice_shop_loads', JSON.stringify(resolvedLoads));
-      } catch (err) {
-        console.warn('Could not fetch from Google Sheets, using local cache:', err);
-        // Fallback to localStorage
-        const cachedEntries = localStorage.getItem('spice_entries');
-        const cachedSales   = localStorage.getItem('spice_sales');
-        const cachedLoads   = localStorage.getItem('spice_shop_loads');
-        if (cachedEntries) setEntries(JSON.parse(cachedEntries));
-        if (cachedSales)   setSales(JSON.parse(cachedSales));
-        if (cachedLoads)   setShopLoads(prev => ({ ...prev, ...JSON.parse(cachedLoads) }));
-      } finally {
-        if (!cancelled) setLoading(false);
+          }
+        });
       }
+      if (Object.keys(resolvedLoads).length > 0) {
+        setShopLoads(prev => ({ ...prev, ...resolvedLoads }));
+      }
+
+      setLastSync(new Date());
+    } catch (err) {
+      console.warn('Sheet sync failed:', err);
+    } finally {
+      setSyncing(false);
     }
-    fetchFromSheets();
-    return () => { cancelled = true; };
+  };
+
+  // ── Fetch on mount + auto-poll every 30s ──
+  useEffect(() => {
+    refreshFromSheets();
+    const interval = setInterval(() => refreshFromSheets(true), 30000);
+    return () => clearInterval(interval);
   }, []);
 
-  // Save to local storage as cache when data changes
+  // Debounced localStorage cache — only writes once every 5 seconds max
+  // Prevents lag from constant JSON serialization on every poll/update
   useEffect(() => {
-    if (!loading) localStorage.setItem('spice_entries', JSON.stringify(entries));
-  }, [entries, loading]);
-
-  useEffect(() => {
-    if (!loading) localStorage.setItem('spice_sales', JSON.stringify(sales));
-  }, [sales, loading]);
-
-  useEffect(() => {
-    if (!loading) localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
-  }, [shopLoads, loading]);
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem('spice_entries', JSON.stringify(entries));
+        localStorage.setItem('spice_sales', JSON.stringify(sales));
+        localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
+      } catch (e) {
+        // localStorage full — clear old cache
+        console.warn('localStorage full, clearing cache:', e);
+        localStorage.removeItem('spice_entries');
+        localStorage.removeItem('spice_sales');
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [entries, sales, shopLoads]);
 
   // Derived state: per-spice stats for the selected shop
   const stats = SPICES.map(spice => {
@@ -438,18 +444,18 @@ function App() {
     setSelectedShop(tfTo);
   };
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ width: 40, height: 40, border: '4px solid #e0e0e0', borderTop: '4px solid var(--cardamom-main, #4caf50)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <p style={{ color: '#888', fontSize: 14 }}>Loading from Google Sheets…</p>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
   return (
     <>
+      {/* Sync indicator bar */}
+      {syncing && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+          height: 3, background: 'linear-gradient(90deg, var(--cardamom-main, #4caf50), var(--primary-accent, #58a6ff))',
+          animation: 'syncPulse 1.2s ease-in-out infinite',
+        }} />
+      )}
+      <style>{`@keyframes syncPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+
       <div className="content-area">
         {activeTab === 'dashboard' && (
           <Dashboard 
@@ -461,6 +467,9 @@ function App() {
             days={daysSinceLoadStart}
             onDispatch={handleDispatchLoad}
             onTransfer={openTransferModal}
+            syncing={syncing}
+            lastSync={lastSync}
+            onRefresh={() => refreshFromSheets()}
           />
         )}
         {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
@@ -810,7 +819,7 @@ function App() {
 }
 
 // COMPONENTS
-function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer }) {
+function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh }) {
   const [showOverallAvg, setShowOverallAvg] = useState(false);
 
   return (
@@ -820,10 +829,35 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           <img src="/kvs-logo.png" alt="KVS" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'contain' }} />
           <div>
             <h1 className="title">KVS Spices</h1>
-            <p className="subtitle">Current Load ({days} {days === 1 ? 'day' : 'days'})</p>
+            <p className="subtitle" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              Current Load ({days} {days === 1 ? 'day' : 'days'})
+              {syncing && <span style={{ fontSize: '0.6rem', color: 'var(--primary-accent)', marginLeft: 4 }}>⟳ syncing…</span>}
+            </p>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {/* Refresh button */}
+          <button
+            onClick={onRefresh}
+            disabled={syncing}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36,
+              background: syncing ? 'rgba(88,166,255,0.2)' : 'rgba(88,166,255,0.12)',
+              border: '1px solid rgba(88,166,255,0.3)',
+              borderRadius: 12,
+              color: '#58a6ff',
+              cursor: syncing ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s ease',
+              animation: syncing ? 'spin 1s linear infinite' : 'none',
+            }}
+            title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh from Google Sheets'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+          </button>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           <button
             onClick={onTransfer}
             style={{
@@ -1265,13 +1299,34 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
 }
 
 function History({ entries, sales, selectedShop, onSelectShop, shops, spices, shopLoads, onDeleteEntry, onDeleteSale }) {
+  // Date range filter state
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [filterType, setFilterType] = useState('all'); // 'all', 'purchase', 'sale'
+
   // Merge purchases + sales, sort newest first
   const allRecords = [
     ...entries.map(e => ({ ...e, kind: 'purchase' })),
     ...sales.map(s => ({ ...s, kind: 'sale' })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  const shopRecords = allRecords.filter(r => r.shop === selectedShop);
+  const shopRecords = allRecords.filter(r => {
+    if (r.shop !== selectedShop) return false;
+    // Date filter
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setHours(0, 0, 0, 0);
+      if (new Date(r.date) < from) return false;
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59, 999);
+      if (new Date(r.date) > to) return false;
+    }
+    // Type filter
+    if (filterType !== 'all' && r.kind !== filterType) return false;
+    return true;
+  });
 
   const getLoad = (shop, spiceId) => shopLoads[`${shop}|${spiceId}`] || { id: '0' };
 
@@ -1377,12 +1432,30 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     // ── Rupee helper (Helvetica doesn't have ₹) ──
     const R = (val) => `Rs.${val}`;
 
+    // ── Date filter helper for PDF ──
+    const dateFilter = (item) => {
+      if (dateFrom) {
+        const from = new Date(dateFrom); from.setHours(0,0,0,0);
+        if (new Date(item.date) < from) return false;
+      }
+      if (dateTo) {
+        const to = new Date(dateTo); to.setHours(23,59,59,999);
+        if (new Date(item.date) > to) return false;
+      }
+      return true;
+    };
+
+    // ── Date range label for PDF title ──
+    const dateRangeLabel = (dateFrom || dateTo)
+      ? ` (${dateFrom ? format(new Date(dateFrom), 'dd MMM yyyy') : 'Start'} - ${dateTo ? format(new Date(dateTo), 'dd MMM yyyy') : 'Now'})`
+      : '';
+
     // ── Stock Summary ──
-    y = sectionTitle('Stock Summary', y);
+    y = sectionTitle('Stock Summary' + dateRangeLabel, y);
 
     const summaryData = spices.map(spice => {
-      const spiceEntries = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
-      const spiceSales = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
+      const spiceEntries = entries.filter(e => e.shop === selectedShop && e.type === spice.id && dateFilter(e));
+      const spiceSales = sales.filter(s => s.shop === selectedShop && s.type === spice.id && dateFilter(s));
       const totalQty = spiceEntries.reduce((s, e) => s + Number(e.qty), 0);
       const totalBuyValue = spiceEntries.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
       const soldQty = spiceSales.reduce((s, e) => s + Number(e.qty), 0);
@@ -1496,7 +1569,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     y += 34;
 
     // ── Purchase Records ──
-    const shopPurchases = entries.filter(e => e.shop === selectedShop).sort((a, b) => new Date(b.date) - new Date(a.date));
+    const shopPurchases = entries.filter(e => e.shop === selectedShop && dateFilter(e)).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     if (shopPurchases.length > 0) {
       if (y > pageH - 50) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
@@ -1526,7 +1599,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }
 
     // ── Sale Records ──
-    const shopSales = sales.filter(s => s.shop === selectedShop).sort((a, b) => new Date(b.date) - new Date(a.date));
+    const shopSales = sales.filter(s => s.shop === selectedShop && dateFilter(s)).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     if (shopSales.length > 0) {
       if (y > pageH - 50) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
@@ -1771,10 +1844,85 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         ))}
       </div>
 
+      {/* ── Date Range & Filter ── */}
+      <div className="glass-card" style={{ marginBottom: '1rem', padding: '1rem 1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <Filter size={16} style={{ color: 'var(--primary-accent)' }} />
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>Filter Records</span>
+          {(dateFrom || dateTo || filterType !== 'all') && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); setFilterType('all'); }}
+              style={{
+                marginLeft: 'auto', fontSize: '0.7rem', padding: '0.2rem 0.6rem',
+                borderRadius: 6, border: '1px solid rgba(248,113,113,0.3)',
+                background: 'rgba(248,113,113,0.08)', color: 'var(--danger)',
+                cursor: 'pointer',
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+          <div style={{ flex: 1, minWidth: 130 }}>
+            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>From</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              style={{
+                width: '100%', padding: '0.5rem', borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: 130 }}>
+            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>To</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              style={{
+                width: '100%', padding: '0.5rem', borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+              }}
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {['all', 'purchase', 'sale'].map(t => (
+            <button
+              key={t}
+              onClick={() => setFilterType(t)}
+              style={{
+                flex: 1, padding: '0.4rem', borderRadius: 8, fontSize: '0.75rem', fontWeight: 600,
+                border: filterType === t ? '1px solid var(--primary-accent)' : '1px solid rgba(255,255,255,0.1)',
+                background: filterType === t ? 'rgba(88,166,255,0.15)' : 'rgba(255,255,255,0.04)',
+                color: filterType === t ? 'var(--primary-accent)' : 'var(--text-secondary)',
+                cursor: 'pointer', transition: 'all 0.15s ease',
+              }}
+            >
+              {t === 'all' ? 'All' : t === 'purchase' ? '↓ Buys' : '↑ Sales'}
+            </button>
+          ))}
+        </div>
+        {(dateFrom || dateTo) && (
+          <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+            Showing {shopRecords.length} record{shopRecords.length !== 1 ? 's' : ''}
+            {dateFrom && ` from ${format(new Date(dateFrom), 'dd MMM yyyy')}`}
+            {dateTo && ` to ${format(new Date(dateTo), 'dd MMM yyyy')}`}
+          </div>
+        )}
+      </div>
+
       <div className="glass-card history-buttons-row" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <button className="btn btn-primary" style={{ background: 'var(--primary-accent)' }} onClick={generatePDF}>
           <Download size={20} />
-          Download {selectedShop} Report
+          Download {selectedShop} Report {(dateFrom || dateTo) ? '(Filtered)' : ''}
         </button>
         <button className="btn btn-primary" style={{ background: 'rgba(76,175,80,0.9)' }} onClick={generateOverallPDF}>
           <Download size={20} />
@@ -1782,7 +1930,12 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         </button>
       </div>
 
-      <h2 className="title" style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>All Records</h2>
+      <h2 className="title" style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>
+        {filterType === 'all' ? 'All Records' : filterType === 'purchase' ? 'Purchase Records' : 'Sale Records'}
+        <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 8 }}>
+          ({shopRecords.length})
+        </span>
+      </h2>
       <div className="glass-card" style={{ padding: '0 1.25rem' }}>
         {shopRecords.length === 0 ? (
           <p style={{ padding: '1rem 0', textAlign: 'center', color: 'var(--text-secondary)' }}>No records yet.</p>
