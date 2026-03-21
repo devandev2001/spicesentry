@@ -41,6 +41,27 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
 
+  // WhatsApp number — saved in localStorage
+  const [waNumber, setWaNumber] = useState(() => {
+    try { return localStorage.getItem('kvs_wa_number') || ''; } catch { return ''; }
+  });
+  const [showWaSettings, setShowWaSettings] = useState(false);
+  const [waInput, setWaInput] = useState('');
+
+  const saveWaNumber = () => {
+    const cleaned = waInput.replace(/[^0-9]/g, '');
+    setWaNumber(cleaned);
+    localStorage.setItem('kvs_wa_number', cleaned);
+    setShowWaSettings(false);
+  };
+
+  // Build WhatsApp URL — if number is set, go directly to that contact
+  const waUrl = (text) => {
+    const encoded = encodeURIComponent(text);
+    if (waNumber) return `https://wa.me/${waNumber.startsWith('91') ? waNumber : '91' + waNumber}?text=${encoded}`;
+    return `https://wa.me/?text=${encoded}`;
+  };
+
   // Custom confirm modal (replaces native confirm() for beautiful UI)
   const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm }
   const showConfirm = (message) => new Promise(resolve => {
@@ -524,6 +545,85 @@ function App() {
         </div>
       )}
 
+      {/* ── WhatsApp Number Settings Modal ── */}
+      {showWaSettings && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 10000, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '1.5rem', animation: 'fadeIn 0.15s ease-in-out',
+        }}>
+          <div style={{
+            background: 'var(--card-bg)', borderRadius: 16, padding: '1.5rem',
+            maxWidth: 360, width: '100%', border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <h3 style={{ color: '#25d366', fontSize: '1rem', fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Share2 size={18} /> WhatsApp Number
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '1rem', lineHeight: 1.4 }}>
+              Set a default number so messages go directly to that contact. Leave empty to choose each time.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 600 }}>+91</span>
+              <input
+                type="tel"
+                value={waInput}
+                onChange={e => setWaInput(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="9876543210"
+                maxLength={10}
+                style={{
+                  flex: 1, padding: '0.6rem 0.75rem', borderRadius: 10,
+                  border: '1px solid rgba(37,211,102,0.3)',
+                  background: 'rgba(37,211,102,0.06)', color: 'var(--text-primary)',
+                  fontSize: '1.1rem', fontWeight: 600, letterSpacing: '1px',
+                }}
+                autoFocus
+              />
+            </div>
+            {waNumber && (
+              <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                Currently set: <strong style={{ color: '#25d366' }}>+91 {waNumber}</strong>
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                onClick={() => setShowWaSettings(false)}
+                style={{
+                  flex: 1, padding: '0.65rem', borderRadius: 10, fontWeight: 700, fontSize: '0.85rem',
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-secondary)', cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              {waNumber && (
+                <button
+                  onClick={() => { setWaNumber(''); localStorage.removeItem('kvs_wa_number'); setWaInput(''); setShowWaSettings(false); }}
+                  style={{
+                    padding: '0.65rem 0.75rem', borderRadius: 10, fontWeight: 700, fontSize: '0.85rem',
+                    background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
+                    color: '#f87171', cursor: 'pointer',
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={saveWaNumber}
+                style={{
+                  flex: 1, padding: '0.65rem', borderRadius: 10, fontWeight: 700, fontSize: '0.85rem',
+                  background: '#25d366', border: 'none',
+                  color: '#fff', cursor: 'pointer',
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="content-area">
         {activeTab === 'dashboard' && (
           <Dashboard 
@@ -541,6 +641,9 @@ function App() {
             entries={entries}
             sales={sales}
             shopLoads={shopLoads}
+            waUrl={waUrl}
+            waNumber={waNumber}
+            onOpenWaSettings={() => { setWaInput(waNumber); setShowWaSettings(true); }}
           />
         )}
         {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
@@ -553,6 +656,9 @@ function App() {
             spices={SPICES}
             selectedShop={selectedShop}
             onSelectShop={setSelectedShop}
+            waUrl={waUrl}
+            waNumber={waNumber}
+            onOpenWaSettings={() => { setWaInput(waNumber); setShowWaSettings(true); }}
           />
         )}
         {activeTab === 'history' && (
@@ -904,7 +1010,7 @@ function App() {
 }
 
 // COMPONENTS
-function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh, entries, sales, shopLoads }) {
+function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh, entries, sales, shopLoads, waUrl, waNumber, onOpenWaSettings }) {
   const [showOverallAvg, setShowOverallAvg] = useState(false);
   const [now, setNow] = useState(new Date());
 
@@ -1029,7 +1135,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
     lines.push('— _KVS Spices & Traders_');
 
     const text = lines.join('\n');
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    window.open(waUrl(text), '_blank');
   };
 
   return (
@@ -1126,23 +1232,41 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
       </div>
 
       {/* ── WhatsApp Share Today ── */}
-      <button
-        onClick={shareToday}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-          padding: '0.65rem 1rem', marginBottom: '1.25rem',
-          background: 'rgba(37,211,102,0.1)',
-          border: '1px solid rgba(37,211,102,0.3)',
-          borderRadius: 12,
-          color: '#25d366',
-          fontSize: '0.85rem', fontWeight: 600,
-          cursor: 'pointer',
-          transition: 'all 0.2s ease',
-        }}
-      >
-        <Share2 size={18} />
-        Share Today's Summary on WhatsApp
-      </button>
+      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.25rem' }}>
+        <button
+          onClick={shareToday}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+            padding: '0.65rem 1rem',
+            background: 'rgba(37,211,102,0.1)',
+            border: '1px solid rgba(37,211,102,0.3)',
+            borderRadius: 12,
+            color: '#25d366',
+            fontSize: '0.82rem', fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          <Share2 size={17} />
+          {waNumber ? `Send to +91 ${waNumber.slice(-4).padStart(waNumber.length, '•')}` : "Share on WhatsApp"}
+        </button>
+        <button
+          onClick={onOpenWaSettings}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 42, height: 42,
+            background: waNumber ? 'rgba(37,211,102,0.15)' : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${waNumber ? 'rgba(37,211,102,0.3)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: 12,
+            color: waNumber ? '#25d366' : 'var(--text-secondary)',
+            cursor: 'pointer', transition: 'all 0.15s ease',
+            fontSize: '1rem',
+          }}
+          title="Set WhatsApp number"
+        >
+          ⚙
+        </button>
+      </div>
 
       {/* ── Combined Average (All 3 Branches) — toggleable ── */}
       {showOverallAvg && (
@@ -1553,7 +1677,7 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
 }
 
 // ── Daily Purchase Summary Component ──
-function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectShop }) {
+function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectShop, waUrl, waNumber, onOpenWaSettings }) {
   const today = format(new Date(), 'yyyy-MM-dd');
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo] = useState(today);
@@ -1717,7 +1841,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
     lines.push('— _KVS Spices & Traders_');
 
     const text = lines.join('\n');
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    window.open(waUrl(text), '_blank');
   };
 
   // ── Monthly Comparison — this month vs last month ──
@@ -1951,7 +2075,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
       )}
 
       {/* ── Share & Compare Buttons ── */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
         <button
           onClick={shareToWhatsApp}
           style={{
@@ -1965,9 +2089,27 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
           }}
           disabled={grandTotalBuyQty <= 0}
         >
-            <Share2 size={17} />
-            Share WhatsApp
-          </button>
+          <Share2 size={17} />
+          {waNumber ? `Send to +91 •••${waNumber.slice(-4)}` : 'Share WhatsApp'}
+        </button>
+        <button
+          onClick={onOpenWaSettings}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 40, height: 40,
+            background: waNumber ? 'rgba(37,211,102,0.15)' : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${waNumber ? 'rgba(37,211,102,0.3)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: 12,
+            color: waNumber ? '#25d366' : 'var(--text-secondary)',
+            cursor: 'pointer', transition: 'all 0.15s ease',
+            fontSize: '1rem',
+          }}
+          title="Set WhatsApp number"
+        >
+          ⚙
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
         <button
           onClick={() => setShowMonthlyComparison(v => !v)}
           style={{
