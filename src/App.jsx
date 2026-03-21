@@ -913,22 +913,123 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
     return () => clearInterval(id);
   }, []);
 
-  // ── Backup Snapshot — download all data as JSON ──
+  // ── Backup Snapshot — download all data as CSV ──
   const downloadBackup = () => {
-    const backup = {
-      exportedAt: new Date().toISOString(),
-      app: 'KVS Spices — SpiceSentry',
-      entries,
-      sales,
-      shopLoads,
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    // Build Purchases CSV
+    const purchaseHeaders = ['Date', 'Shop', 'Spice', 'Qty (Kg)', 'Price/Kg', 'Total Value', 'Load ID'];
+    const purchaseRows = entries
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .map(e => [
+        e.date ? format(new Date(e.date), 'yyyy-MM-dd HH:mm') : '',
+        e.shop || '',
+        e.type || '',
+        Number(e.qty).toFixed(2),
+        Number(e.price).toFixed(2),
+        (Number(e.qty) * Number(e.price)).toFixed(2),
+        e.loadId || '',
+      ]);
+
+    // Build Sales CSV
+    const saleHeaders = ['Date', 'Shop', 'Spice', 'Qty (Kg)', 'Sell Price/Kg', 'Total Value', 'Buyer', 'Load ID'];
+    const saleRows = sales
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .map(s => [
+        s.date ? format(new Date(s.date), 'yyyy-MM-dd HH:mm') : '',
+        s.shop || '',
+        s.type || '',
+        Number(s.qty).toFixed(2),
+        Number(s.sellPrice).toFixed(2),
+        (Number(s.qty) * Number(s.sellPrice)).toFixed(2),
+        (s.buyerName || '').replace(/,/g, ' '),
+        s.loadId || '',
+      ]);
+
+    const escapeCSV = (val) => `"${String(val).replace(/"/g, '""')}"`;
+    let csv = '';
+    csv += 'PURCHASES\n';
+    csv += purchaseHeaders.map(escapeCSV).join(',') + '\n';
+    purchaseRows.forEach(row => { csv += row.map(escapeCSV).join(',') + '\n'; });
+    csv += '\nSALES\n';
+    csv += saleHeaders.map(escapeCSV).join(',') + '\n';
+    saleRows.forEach(row => { csv += row.map(escapeCSV).join(',') + '\n'; });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `KVS_Backup_${format(new Date(), 'yyyy-MM-dd_HHmm')}.json`;
+    a.download = `KVS_Backup_${format(new Date(), 'yyyy-MM-dd_HHmm')}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // ── WhatsApp Share Today's Summary from Dashboard ──
+  const shareToday = () => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const todayStart = new Date(todayStr);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStr);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const todayEntries = entries.filter(e => {
+      if (!e.date) return false;
+      const d = new Date(e.date);
+      return d >= todayStart && d <= todayEnd;
+    });
+    const todaySales = sales.filter(s => {
+      if (!s.date) return false;
+      const d = new Date(s.date);
+      return d >= todayStart && d <= todayEnd;
+    });
+
+    const SPICE_LIST = [
+      { id: 'cardamom', label: 'Cardamom' }, { id: 'pepper', label: 'Pepper' },
+      { id: 'nutmeg', label: 'Nutmeg' }, { id: 'nutmeg_mace', label: 'Nutmeg Mace' },
+      { id: 'coffee', label: 'Coffee' }, { id: 'clove', label: 'Clove' },
+    ];
+
+    let lines = [];
+    lines.push(`📊 *KVS Spices — Today's Summary*`);
+    lines.push(`📅 ${format(new Date(), 'dd MMM yyyy, hh:mm a')}`);
+    lines.push('');
+
+    if (todayEntries.length > 0) {
+      lines.push('*Purchases:*');
+      SPICE_LIST.forEach(spice => {
+        const sp = todayEntries.filter(e => e.type === spice.id);
+        const qty = sp.reduce((s, e) => s + Number(e.qty), 0);
+        const val = sp.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        if (qty > 0) {
+          lines.push(`  🌿 ${spice.label}: ${qty.toFixed(2)} Kg @ ₹${(val/qty).toFixed(2)}/Kg = ₹${Math.round(val).toLocaleString('en-IN')}`);
+        }
+      });
+      const totalQ = todayEntries.reduce((s, e) => s + Number(e.qty), 0);
+      const totalV = todayEntries.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      lines.push(`*Total:* ${totalQ.toFixed(2)} Kg — ₹${Math.round(totalV).toLocaleString('en-IN')}`);
+    } else {
+      lines.push('_No purchases today._');
+    }
+
+    if (todaySales.length > 0) {
+      lines.push('');
+      lines.push('*Sales:*');
+      SPICE_LIST.forEach(spice => {
+        const ss = todaySales.filter(s => s.type === spice.id);
+        const qty = ss.reduce((s, e) => s + Number(e.qty), 0);
+        const val = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        if (qty > 0) {
+          lines.push(`  💰 ${spice.label}: ${qty.toFixed(2)} Kg @ ₹${(val/qty).toFixed(2)}/Kg = ₹${Math.round(val).toLocaleString('en-IN')}`);
+        }
+      });
+      const totalSQ = todaySales.reduce((s, e) => s + Number(e.qty), 0);
+      const totalSV = todaySales.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      lines.push(`*Total Sold:* ${totalSQ.toFixed(2)} Kg — ₹${Math.round(totalSV).toLocaleString('en-IN')}`);
+    }
+
+    lines.push('');
+    lines.push('— _KVS Spices & Traders_');
+
+    const text = lines.join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
   return (
@@ -958,7 +1059,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
               cursor: 'pointer',
               transition: 'all 0.2s ease',
             }}
-            title="Download backup (JSON)"
+            title="Download backup (CSV)"
           >
             <HardDriveDownload size={18} />
           </button>
@@ -1023,6 +1124,25 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
           Overall Avg
         </button>
       </div>
+
+      {/* ── WhatsApp Share Today ── */}
+      <button
+        onClick={shareToday}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+          padding: '0.65rem 1rem', marginBottom: '1.25rem',
+          background: 'rgba(37,211,102,0.1)',
+          border: '1px solid rgba(37,211,102,0.3)',
+          borderRadius: 12,
+          color: '#25d366',
+          fontSize: '0.85rem', fontWeight: 600,
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        <Share2 size={18} />
+        Share Today's Summary on WhatsApp
+      </button>
 
       {/* ── Combined Average (All 3 Branches) — toggleable ── */}
       {showOverallAvg && (
@@ -1832,21 +1952,22 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
 
       {/* ── Share & Compare Buttons ── */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        {grandTotalBuyQty > 0 && (
-          <button
-            onClick={shareToWhatsApp}
-            style={{
-              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-              padding: '0.65rem 0.75rem', borderRadius: 12,
-              background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)',
-              color: '#25d366', fontSize: '0.82rem', fontWeight: 600,
-              cursor: 'pointer', transition: 'all 0.15s ease',
-            }}
-          >
+        <button
+          onClick={shareToWhatsApp}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+            padding: '0.65rem 0.75rem', borderRadius: 12,
+            background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)',
+            color: '#25d366', fontSize: '0.82rem', fontWeight: 600,
+            cursor: grandTotalBuyQty > 0 ? 'pointer' : 'not-allowed',
+            opacity: grandTotalBuyQty > 0 ? 1 : 0.5,
+            transition: 'all 0.15s ease',
+          }}
+          disabled={grandTotalBuyQty <= 0}
+        >
             <Share2 size={17} />
             Share WhatsApp
           </button>
-        )}
         <button
           onClick={() => setShowMonthlyComparison(v => !v)}
           style={{
