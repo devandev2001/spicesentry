@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays } from 'lucide-react';
-import { format, differenceInDays } from 'date-fns';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, Share2, BarChart3, HardDriveDownload } from 'lucide-react';
+import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -538,6 +538,9 @@ function App() {
             syncing={syncing}
             lastSync={lastSync}
             onRefresh={() => refreshFromSheets()}
+            entries={entries}
+            sales={sales}
+            shopLoads={shopLoads}
           />
         )}
         {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
@@ -901,7 +904,7 @@ function App() {
 }
 
 // COMPONENTS
-function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh }) {
+function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, days, onDispatch, onTransfer, syncing, lastSync, onRefresh, entries, sales, shopLoads }) {
   const [showOverallAvg, setShowOverallAvg] = useState(false);
   const [now, setNow] = useState(new Date());
 
@@ -909,6 +912,24 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // ── Backup Snapshot — download all data as JSON ──
+  const downloadBackup = () => {
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      app: 'KVS Spices — SpiceSentry',
+      entries,
+      sales,
+      shopLoads,
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `KVS_Backup_${format(new Date(), 'yyyy-MM-dd_HHmm')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
@@ -923,27 +944,45 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
             </p>
           </div>
         </div>
-        {/* Refresh button */}
-        <button
-          onClick={onRefresh}
-          disabled={syncing}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 36, height: 36,
-            background: syncing ? 'rgba(88,166,255,0.2)' : 'rgba(88,166,255,0.12)',
-            border: '1px solid rgba(88,166,255,0.3)',
-            borderRadius: 12,
-            color: '#58a6ff',
-            cursor: syncing ? 'not-allowed' : 'pointer',
-            transition: 'all 0.2s ease',
-            animation: syncing ? 'spin 1s linear infinite' : 'none',
-          }}
-          title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh from Google Sheets'}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-          </svg>
-        </button>
+        {/* Refresh + Backup buttons */}
+        <div style={{ display: 'flex', gap: '0.4rem' }}>
+          <button
+            onClick={downloadBackup}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36,
+              background: 'rgba(76,175,80,0.12)',
+              border: '1px solid rgba(76,175,80,0.3)',
+              borderRadius: 12,
+              color: '#4caf50',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            title="Download backup (JSON)"
+          >
+            <HardDriveDownload size={18} />
+          </button>
+          <button
+            onClick={onRefresh}
+            disabled={syncing}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36,
+              background: syncing ? 'rgba(88,166,255,0.2)' : 'rgba(88,166,255,0.12)',
+              border: '1px solid rgba(88,166,255,0.3)',
+              borderRadius: 12,
+              color: '#58a6ff',
+              cursor: syncing ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s ease',
+              animation: syncing ? 'spin 1s linear infinite' : 'none',
+            }}
+            title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh from Google Sheets'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+          </button>
+        </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
 
@@ -1511,6 +1550,94 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
   const grandTotalSellValue = filteredSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
   const grandAvgBuyPrice = grandTotalBuyQty > 0 ? +(grandTotalBuyValue / grandTotalBuyQty).toFixed(2) : 0;
 
+  // ── WhatsApp Share — build formatted text summary ──
+  const shareToWhatsApp = () => {
+    const dateLabel = dateFrom === dateTo
+      ? format(new Date(dateFrom), 'dd MMM yyyy')
+      : `${format(new Date(dateFrom), 'dd MMM')} - ${format(new Date(dateTo), 'dd MMM yyyy')}`;
+    const shopLabel = viewMode === 'all' ? 'All Shops' : selectedShop;
+
+    let lines = [];
+    lines.push(`📊 *KVS Spices — ${shopLabel}*`);
+    lines.push(`📅 ${dateLabel}`);
+    lines.push('');
+
+    // Per-spice summary
+    lines.push('*Purchase Summary:*');
+    spices.forEach(spice => {
+      const sp = filteredEntries.filter(e => e.type === spice.id);
+      const qty = sp.reduce((s, e) => s + Number(e.qty), 0);
+      const val = sp.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      if (qty > 0) {
+        const avg = (val / qty).toFixed(2);
+        lines.push(`  🌿 ${spice.label}: ${qty.toFixed(2)} Kg @ ₹${avg}/Kg = ₹${Math.round(val).toLocaleString('en-IN')}`);
+      }
+    });
+    lines.push('');
+    lines.push(`*Total Purchased:* ${grandTotalBuyQty.toFixed(2)} Kg`);
+    lines.push(`*Total Value:* ₹${Math.round(grandTotalBuyValue).toLocaleString('en-IN')}`);
+    lines.push(`*Avg Price:* ₹${grandAvgBuyPrice}/Kg`);
+
+    if (grandTotalSellQty > 0) {
+      lines.push('');
+      lines.push('*Sale Summary:*');
+      spices.forEach(spice => {
+        const ss = filteredSales.filter(s => s.type === spice.id);
+        const qty = ss.reduce((s, e) => s + Number(e.qty), 0);
+        const val = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        if (qty > 0) {
+          const avg = (val / qty).toFixed(2);
+          lines.push(`  💰 ${spice.label}: ${qty.toFixed(2)} Kg @ ₹${avg}/Kg = ₹${Math.round(val).toLocaleString('en-IN')}`);
+        }
+      });
+      lines.push(`*Total Sold:* ${grandTotalSellQty.toFixed(2)} Kg — ₹${Math.round(grandTotalSellValue).toLocaleString('en-IN')}`);
+    }
+
+    lines.push('');
+    lines.push('— _KVS Spices & Traders_');
+
+    const text = lines.join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  // ── Monthly Comparison — this month vs last month ──
+  const [showMonthlyComparison, setShowMonthlyComparison] = useState(false);
+
+  const buildMonthStats = (monthStart, monthEnd) => {
+    const inRange = (item) => {
+      if (!item.date) return false;
+      const d = new Date(item.date);
+      return d >= monthStart && d <= monthEnd;
+    };
+    const shopF = (item) => viewMode === 'all' || item.shop === selectedShop;
+    const mEntries = entries.filter(e => inRange(e) && shopF(e));
+    const mSales = sales.filter(s => inRange(s) && shopF(s));
+
+    const totalBuyQty = mEntries.reduce((s, e) => s + Number(e.qty), 0);
+    const totalBuyValue = mEntries.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+    const avgBuyPrice = totalBuyQty > 0 ? +(totalBuyValue / totalBuyQty).toFixed(2) : 0;
+    const totalSellQty = mSales.reduce((s, e) => s + Number(e.qty), 0);
+    const totalSellValue = mSales.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+
+    const perSpice = spices.map(spice => {
+      const sp = mEntries.filter(e => e.type === spice.id);
+      const sq = sp.reduce((s, e) => s + Number(e.qty), 0);
+      const sv = sp.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      return { ...spice, qty: sq, value: sv, avg: sq > 0 ? +(sv / sq).toFixed(2) : 0 };
+    }).filter(s => s.qty > 0);
+
+    return { totalBuyQty, totalBuyValue, avgBuyPrice, totalSellQty, totalSellValue, perSpice, entryCount: mEntries.length };
+  };
+
+  const now = new Date();
+  const thisMonthStart = startOfMonth(now);
+  const thisMonthEnd = now;
+  const lastMonthStart = startOfMonth(subMonths(now, 1));
+  const lastMonthEnd = endOfMonth(subMonths(now, 1));
+
+  const thisMonth = buildMonthStats(thisMonthStart, thisMonthEnd);
+  const lastMonth = buildMonthStats(lastMonthStart, lastMonthEnd);
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
       <h1 className="title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1700,6 +1827,152 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
               })}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Share & Compare Buttons ── */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        {grandTotalBuyQty > 0 && (
+          <button
+            onClick={shareToWhatsApp}
+            style={{
+              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+              padding: '0.65rem 0.75rem', borderRadius: 12,
+              background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)',
+              color: '#25d366', fontSize: '0.82rem', fontWeight: 600,
+              cursor: 'pointer', transition: 'all 0.15s ease',
+            }}
+          >
+            <Share2 size={17} />
+            Share WhatsApp
+          </button>
+        )}
+        <button
+          onClick={() => setShowMonthlyComparison(v => !v)}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+            padding: '0.65rem 0.75rem', borderRadius: 12,
+            background: showMonthlyComparison ? 'rgba(168,85,247,0.2)' : 'rgba(168,85,247,0.08)',
+            border: `1px solid ${showMonthlyComparison ? 'rgba(168,85,247,0.5)' : 'rgba(168,85,247,0.25)'}`,
+            color: '#a855f7', fontSize: '0.82rem', fontWeight: 600,
+            cursor: 'pointer', transition: 'all 0.15s ease',
+          }}
+        >
+          <BarChart3 size={17} />
+          Monthly Compare
+        </button>
+      </div>
+
+      {/* ── Monthly Comparison Panel ── */}
+      {showMonthlyComparison && (
+        <div className="glass-card" style={{ marginBottom: '1.25rem', padding: '1rem 1.25rem', animation: 'fadeIn 0.2s ease-in-out' }}>
+          <h3 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#a855f7', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <BarChart3 size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+            {format(thisMonthStart, 'MMMM yyyy')} vs {format(lastMonthStart, 'MMMM yyyy')}
+          </h3>
+
+          {/* Side-by-side totals */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            {/* This month */}
+            <div style={{ background: 'rgba(168,85,247,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(168,85,247,0.15)' }}>
+              <div style={{ fontSize: '0.6rem', color: '#a855f7', fontWeight: 700, marginBottom: '0.25rem' }}>
+                {format(thisMonthStart, 'MMM yyyy')}
+              </div>
+              <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{thisMonth.totalBuyQty.toFixed(1)} Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>₹{Math.round(thisMonth.totalBuyValue).toLocaleString('en-IN')}</div>
+              <div style={{ fontSize: '0.7rem', color: '#a855f7', fontWeight: 600, marginTop: '0.15rem' }}>Avg ₹{thisMonth.avgBuyPrice}/Kg</div>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{thisMonth.entryCount} entries</div>
+            </div>
+            {/* Last month */}
+            <div style={{ background: 'rgba(100,116,139,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(100,116,139,0.15)' }}>
+              <div style={{ fontSize: '0.6rem', color: '#94a3b8', fontWeight: 700, marginBottom: '0.25rem' }}>
+                {format(lastMonthStart, 'MMM yyyy')}
+              </div>
+              <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{lastMonth.totalBuyQty.toFixed(1)} Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>₹{Math.round(lastMonth.totalBuyValue).toLocaleString('en-IN')}</div>
+              <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600, marginTop: '0.15rem' }}>Avg ₹{lastMonth.avgBuyPrice}/Kg</div>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{lastMonth.entryCount} entries</div>
+            </div>
+          </div>
+
+          {/* Change indicators */}
+          {lastMonth.totalBuyQty > 0 && thisMonth.totalBuyQty > 0 && (
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              {(() => {
+                const qtyChange = ((thisMonth.totalBuyQty - lastMonth.totalBuyQty) / lastMonth.totalBuyQty * 100).toFixed(1);
+                const priceChange = ((thisMonth.avgBuyPrice - lastMonth.avgBuyPrice) / lastMonth.avgBuyPrice * 100).toFixed(1);
+                const spendChange = ((thisMonth.totalBuyValue - lastMonth.totalBuyValue) / lastMonth.totalBuyValue * 100).toFixed(1);
+                return [
+                  { label: 'Qty', change: qtyChange, up: Number(qtyChange) >= 0 },
+                  { label: 'Avg Price', change: priceChange, up: Number(priceChange) >= 0 },
+                  { label: 'Spend', change: spendChange, up: Number(spendChange) >= 0 },
+                ].map(c => (
+                  <div key={c.label} style={{
+                    flex: 1, minWidth: 80, textAlign: 'center',
+                    background: c.up ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${c.up ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                    borderRadius: 8, padding: '0.35rem 0.5rem',
+                  }}>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>{c.label}</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 800, color: c.up ? '#10b981' : '#f87171' }}>
+                      {c.up ? '▲' : '▼'} {Math.abs(Number(c.change))}%
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+
+          {/* Per-spice comparison table */}
+          {(thisMonth.perSpice.length > 0 || lastMonth.perSpice.length > 0) && (
+            <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(30,38,50,0.8)' }}>
+                    <th style={{ padding: '0.5rem 0.4rem', color: '#a855f7', fontWeight: 700, textAlign: 'left', fontSize: '0.65rem' }}>Spice</th>
+                    <th style={{ padding: '0.5rem 0.4rem', color: '#a855f7', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>This Month</th>
+                    <th style={{ padding: '0.5rem 0.4rem', color: '#94a3b8', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Last Month</th>
+                    <th style={{ padding: '0.5rem 0.4rem', color: '#a855f7', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Avg Now</th>
+                    <th style={{ padding: '0.5rem 0.4rem', color: '#94a3b8', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Avg Then</th>
+                    <th style={{ padding: '0.5rem 0.4rem', color: 'var(--text-secondary)', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spices.map((spice, i) => {
+                    const tm = thisMonth.perSpice.find(s => s.id === spice.id);
+                    const lm = lastMonth.perSpice.find(s => s.id === spice.id);
+                    if (!tm && !lm) return null;
+                    const tmQty = tm ? tm.qty : 0;
+                    const lmQty = lm ? lm.qty : 0;
+                    const tmAvg = tm ? tm.avg : 0;
+                    const lmAvg = lm ? lm.avg : 0;
+                    const change = lmAvg > 0 ? ((tmAvg - lmAvg) / lmAvg * 100).toFixed(1) : null;
+                    return (
+                      <tr key={spice.id} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
+                        <td style={{ padding: '0.45rem 0.4rem', fontWeight: 700, color: spice.color, whiteSpace: 'nowrap' }}>{spice.label}</td>
+                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-primary)' }}>{tmQty > 0 ? `${tmQty.toFixed(1)} Kg` : '-'}</td>
+                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{lmQty > 0 ? `${lmQty.toFixed(1)} Kg` : '-'}</td>
+                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>{tmAvg > 0 ? `₹${tmAvg}` : '-'}</td>
+                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{lmAvg > 0 ? `₹${lmAvg}` : '-'}</td>
+                        <td style={{
+                          padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700,
+                          color: change === null ? 'var(--text-secondary)' : Number(change) <= 0 ? '#10b981' : '#f87171',
+                        }}>
+                          {change === null ? '-' : `${Number(change) > 0 ? '+' : ''}${change}%`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {thisMonth.totalBuyQty === 0 && lastMonth.totalBuyQty === 0 && (
+            <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8rem', padding: '0.5rem 0' }}>
+              No purchase data for this or last month.
+            </p>
+          )}
         </div>
       )}
 
