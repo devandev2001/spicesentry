@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye } from 'lucide-react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -542,6 +542,16 @@ function App() {
         )}
         {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
         {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} />}
+        {activeTab === 'daily' && (
+          <DailyPurchases
+            entries={entries}
+            sales={sales}
+            shops={SHOPS}
+            spices={SPICES}
+            selectedShop={selectedShop}
+            onSelectShop={setSelectedShop}
+          />
+        )}
         {activeTab === 'history' && (
           <History 
             entries={entries}
@@ -573,6 +583,10 @@ function App() {
         <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => goTo('sell')}>
           <ShoppingBag />
           <span>Sell</span>
+        </button>
+        <button className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
+          <CalendarDays />
+          <span>Daily</span>
         </button>
         <button className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
           <Clock />
@@ -1375,6 +1389,542 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
           Confirm Sale
         </button>
       </form>
+    </div>
+  );
+}
+
+// ── Daily Purchase Summary Component ──
+function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectShop }) {
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo] = useState(today);
+  const [viewMode, setViewMode] = useState('all'); // 'all' shops or specific shop
+  const [expandedDate, setExpandedDate] = useState(null);
+
+  // Quick presets
+  const setPreset = (preset) => {
+    const now = new Date();
+    const fmt = (d) => format(d, 'yyyy-MM-dd');
+    if (preset === 'today') { setDateFrom(fmt(now)); setDateTo(fmt(now)); }
+    else if (preset === 'yesterday') {
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      setDateFrom(fmt(y)); setDateTo(fmt(y));
+    }
+    else if (preset === 'week') {
+      const w = new Date(now); w.setDate(w.getDate() - 6);
+      setDateFrom(fmt(w)); setDateTo(fmt(now));
+    }
+    else if (preset === 'month') {
+      const m = new Date(now.getFullYear(), now.getMonth(), 1);
+      setDateFrom(fmt(m)); setDateTo(fmt(now));
+    }
+  };
+
+  // Filter entries by date range and shop
+  const dateFilter = (item) => {
+    if (!item.date) return false;
+    const itemDate = new Date(item.date);
+    if (dateFrom) { const from = new Date(dateFrom); from.setHours(0, 0, 0, 0); if (itemDate < from) return false; }
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (itemDate > to) return false; }
+    return true;
+  };
+
+  const shopFilter = (item) => viewMode === 'all' || item.shop === selectedShop;
+
+  const filteredEntries = entries.filter(e => dateFilter(e) && shopFilter(e));
+  const filteredSales = sales.filter(s => dateFilter(s) && shopFilter(s));
+
+  // Group entries by date
+  const groupByDate = (items) => {
+    const groups = {};
+    items.forEach(item => {
+      const dateKey = format(new Date(item.date), 'yyyy-MM-dd');
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(item);
+    });
+    return groups;
+  };
+
+  const purchasesByDate = groupByDate(filteredEntries);
+  const salesByDate = groupByDate(filteredSales);
+
+  // Get all unique dates, sorted newest first
+  const allDates = [...new Set([
+    ...Object.keys(purchasesByDate),
+    ...Object.keys(salesByDate),
+  ])].sort((a, b) => new Date(b) - new Date(a));
+
+  // Build daily summary for each date
+  const dailySummaries = allDates.map(dateKey => {
+    const dayPurchases = purchasesByDate[dateKey] || [];
+    const daySales = salesByDate[dateKey] || [];
+
+    // Per-spice breakdown
+    const spiceBreakdown = spices.map(spice => {
+      const sp = dayPurchases.filter(e => e.type === spice.id);
+      const ss = daySales.filter(s => s.type === spice.id);
+      const buyQty = sp.reduce((sum, e) => sum + Number(e.qty), 0);
+      const buyValue = sp.reduce((sum, e) => sum + Number(e.qty) * Number(e.price), 0);
+      const avgBuyPrice = buyQty > 0 ? +(buyValue / buyQty).toFixed(2) : 0;
+      const sellQty = ss.reduce((sum, s) => sum + Number(s.qty), 0);
+      const sellValue = ss.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
+      const avgSellPrice = sellQty > 0 ? +(sellValue / sellQty).toFixed(2) : 0;
+      return { ...spice, buyQty, buyValue, avgBuyPrice, sellQty, sellValue, avgSellPrice };
+    }).filter(s => s.buyQty > 0 || s.sellQty > 0);
+
+    // Per-shop breakdown (when viewing all shops)
+    const shopBreakdown = viewMode === 'all' ? shops.map(shop => {
+      const sp = dayPurchases.filter(e => e.shop === shop);
+      const ss = daySales.filter(s => s.shop === shop);
+      const buyQty = sp.reduce((sum, e) => sum + Number(e.qty), 0);
+      const buyValue = sp.reduce((sum, e) => sum + Number(e.qty) * Number(e.price), 0);
+      const sellQty = ss.reduce((sum, s) => sum + Number(s.qty), 0);
+      const sellValue = ss.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
+      return { shop, buyQty, buyValue, sellQty, sellValue };
+    }).filter(s => s.buyQty > 0 || s.sellQty > 0) : [];
+
+    const totalBuyQty = dayPurchases.reduce((sum, e) => sum + Number(e.qty), 0);
+    const totalBuyValue = dayPurchases.reduce((sum, e) => sum + Number(e.qty) * Number(e.price), 0);
+    const totalSellQty = daySales.reduce((sum, s) => sum + Number(s.qty), 0);
+    const totalSellValue = daySales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
+
+    return {
+      dateKey,
+      dateLabel: format(new Date(dateKey), 'EEE, dd MMM yyyy'),
+      spiceBreakdown,
+      shopBreakdown,
+      totalBuyQty,
+      totalBuyValue,
+      totalSellQty,
+      totalSellValue,
+      purchaseCount: dayPurchases.length,
+      saleCount: daySales.length,
+      purchases: dayPurchases,
+      sales: daySales,
+    };
+  });
+
+  // Grand totals across all filtered dates
+  const grandTotalBuyQty = filteredEntries.reduce((sum, e) => sum + Number(e.qty), 0);
+  const grandTotalBuyValue = filteredEntries.reduce((sum, e) => sum + Number(e.qty) * Number(e.price), 0);
+  const grandTotalSellQty = filteredSales.reduce((sum, s) => sum + Number(s.qty), 0);
+  const grandTotalSellValue = filteredSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
+  const grandAvgBuyPrice = grandTotalBuyQty > 0 ? +(grandTotalBuyValue / grandTotalBuyQty).toFixed(2) : 0;
+
+  return (
+    <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
+      <h1 className="title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <CalendarDays size={22} /> Daily Summary
+      </h1>
+      <p className="subtitle" style={{ marginBottom: '1.25rem' }}>Purchase & sale breakdown by date</p>
+
+      {/* ── Shop Mode Toggle ── */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <button
+          onClick={() => setViewMode('all')}
+          style={{
+            flex: 1, padding: '0.5rem', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600,
+            border: viewMode === 'all' ? '1px solid var(--primary-accent)' : '1px solid rgba(255,255,255,0.1)',
+            background: viewMode === 'all' ? 'rgba(88,166,255,0.15)' : 'rgba(255,255,255,0.04)',
+            color: viewMode === 'all' ? 'var(--primary-accent)' : 'var(--text-secondary)',
+            cursor: 'pointer', transition: 'all 0.15s ease',
+          }}
+        >
+          All Shops
+        </button>
+        <button
+          onClick={() => setViewMode('shop')}
+          style={{
+            flex: 1, padding: '0.5rem', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600,
+            border: viewMode === 'shop' ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
+            background: viewMode === 'shop' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.04)',
+            color: viewMode === 'shop' ? '#10b981' : 'var(--text-secondary)',
+            cursor: 'pointer', transition: 'all 0.15s ease',
+          }}
+        >
+          Per Shop
+        </button>
+      </div>
+
+      {/* Shop selector (when per-shop mode) */}
+      {viewMode === 'shop' && (
+        <div className="shop-selector" style={{ marginBottom: '0.5rem' }}>
+          {shops.map(shop => (
+            <div
+              key={shop}
+              className={`shop-tab ${selectedShop === shop ? 'active' : ''}`}
+              onClick={() => onSelectShop(shop)}
+            >
+              {shop}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Date Range Filter ── */}
+      <div className="glass-card" style={{ marginBottom: '1rem', padding: '1rem 1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <Filter size={16} style={{ color: 'var(--primary-accent)' }} />
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>Date Range</span>
+        </div>
+
+        {/* Quick presets */}
+        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+          {[
+            { key: 'today', label: 'Today' },
+            { key: 'yesterday', label: 'Yesterday' },
+            { key: 'week', label: 'Last 7 Days' },
+            { key: 'month', label: 'This Month' },
+          ].map(p => {
+            const isActive = (() => {
+              const now = new Date();
+              const fmt = (d) => format(d, 'yyyy-MM-dd');
+              if (p.key === 'today') return dateFrom === fmt(now) && dateTo === fmt(now);
+              if (p.key === 'yesterday') { const y = new Date(now); y.setDate(y.getDate()-1); return dateFrom === fmt(y) && dateTo === fmt(y); }
+              if (p.key === 'week') { const w = new Date(now); w.setDate(w.getDate()-6); return dateFrom === fmt(w) && dateTo === fmt(now); }
+              if (p.key === 'month') { const m = new Date(now.getFullYear(), now.getMonth(), 1); return dateFrom === fmt(m) && dateTo === fmt(now); }
+              return false;
+            })();
+            return (
+              <button
+                key={p.key}
+                onClick={() => setPreset(p.key)}
+                style={{
+                  padding: '0.35rem 0.7rem', borderRadius: 8, fontSize: '0.72rem', fontWeight: 600,
+                  border: isActive ? '1px solid var(--primary-accent)' : '1px solid rgba(255,255,255,0.1)',
+                  background: isActive ? 'rgba(88,166,255,0.15)' : 'rgba(255,255,255,0.04)',
+                  color: isActive ? 'var(--primary-accent)' : 'var(--text-secondary)',
+                  cursor: 'pointer', transition: 'all 0.15s ease',
+                }}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Date inputs */}
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 130 }}>
+            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>From</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              style={{
+                width: '100%', padding: '0.5rem', borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: 130 }}>
+            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>To</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              style={{
+                width: '100%', padding: '0.5rem', borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Grand Totals Card ── */}
+      {(grandTotalBuyQty > 0 || grandTotalSellQty > 0) && (
+        <div className="glass-card" style={{ marginBottom: '1.25rem', padding: '1rem 1.25rem' }}>
+          <h3 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#4caf50', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Period Totals — {allDates.length} day{allDates.length !== 1 ? 's' : ''}
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(59,130,246,0.15)' }}>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Purchased</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#58a6ff' }}>{grandTotalBuyQty.toFixed(2)} Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>₹{Math.round(grandTotalBuyValue).toLocaleString('en-IN')}</div>
+            </div>
+            <div style={{ background: 'rgba(76,175,80,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(76,175,80,0.15)' }}>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Avg Buy Price</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#4caf50' }}>₹{grandAvgBuyPrice}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>per Kg</div>
+            </div>
+            {grandTotalSellQty > 0 && (
+              <>
+                <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(16,185,129,0.15)' }}>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Sold</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#10b981' }}>{grandTotalSellQty.toFixed(2)} Kg</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>₹{Math.round(grandTotalSellValue).toLocaleString('en-IN')}</div>
+                </div>
+                <div style={{
+                  background: grandTotalSellValue - grandTotalBuyValue >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                  borderRadius: 10, padding: '0.6rem 0.75rem',
+                  border: `1px solid ${grandTotalSellValue - grandTotalBuyValue >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                }}>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Net P&L</div>
+                  <div style={{
+                    fontSize: '1.05rem', fontWeight: 800,
+                    color: grandTotalSellValue - grandTotalBuyValue >= 0 ? '#10b981' : '#f87171',
+                  }}>
+                    {grandTotalSellValue - grandTotalBuyValue >= 0 ? '+' : ''}₹{Math.round(grandTotalSellValue - grandTotalBuyValue).toLocaleString('en-IN')}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Grand per-spice avg breakdown */}
+          <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: '0.4rem', fontWeight: 600 }}>SPICE-WISE AVG BUY PRICE</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+              {spices.map(spice => {
+                const sp = filteredEntries.filter(e => e.type === spice.id);
+                const qty = sp.reduce((s, e) => s + Number(e.qty), 0);
+                const val = sp.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+                if (qty <= 0) return null;
+                return (
+                  <div key={spice.id} style={{
+                    background: `${spice.color}15`, border: `1px solid ${spice.color}30`,
+                    borderRadius: 8, padding: '0.3rem 0.6rem',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 72,
+                  }}>
+                    <span style={{ fontSize: '0.6rem', color: spice.color, fontWeight: 700 }}>{spice.label}</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>₹{(val / qty).toFixed(2)}</span>
+                    <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>{qty.toFixed(2)} Kg</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Daily Breakdown Cards ── */}
+      {allDates.length === 0 ? (
+        <div className="glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
+          <CalendarDays size={40} style={{ color: 'var(--text-secondary)', marginBottom: '0.75rem' }} />
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>No records found for this date range.</p>
+        </div>
+      ) : (
+        dailySummaries.map(day => {
+          const isExpanded = expandedDate === day.dateKey;
+          return (
+            <div
+              key={day.dateKey}
+              className="glass-card"
+              style={{
+                marginBottom: '0.75rem',
+                padding: 0,
+                overflow: 'hidden',
+                border: isExpanded ? '1px solid rgba(88,166,255,0.25)' : '1px solid rgba(255,255,255,0.06)',
+                transition: 'border-color 0.2s ease',
+              }}
+            >
+              {/* Day header — clickable to expand */}
+              <div
+                onClick={() => setExpandedDate(isExpanded ? null : day.dateKey)}
+                style={{
+                  padding: '0.85rem 1.1rem',
+                  cursor: 'pointer',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  background: isExpanded ? 'rgba(88,166,255,0.06)' : 'transparent',
+                  transition: 'background 0.15s ease',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {day.dateLabel}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                    {day.purchaseCount} purchase{day.purchaseCount !== 1 ? 's' : ''}
+                    {day.saleCount > 0 && ` • ${day.saleCount} sale${day.saleCount !== 1 ? 's' : ''}`}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  {day.totalBuyQty > 0 && (
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#58a6ff' }}>
+                      {day.totalBuyQty.toFixed(2)} Kg
+                    </div>
+                  )}
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                    ₹{Math.round(day.totalBuyValue).toLocaleString('en-IN')}
+                  </div>
+                  <span style={{
+                    fontSize: '0.85rem', color: 'var(--text-secondary)',
+                    transition: 'transform 0.2s ease',
+                    display: 'inline-block',
+                    transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                  }}>
+                    ▼
+                  </span>
+                </div>
+              </div>
+
+              {/* Expanded details */}
+              {isExpanded && (
+                <div style={{ padding: '0 1.1rem 1rem', animation: 'fadeIn 0.2s ease-in-out' }}>
+                  {/* Spice breakdown table */}
+                  {day.spiceBreakdown.length > 0 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                          <thead>
+                            <tr style={{ background: 'rgba(30,38,50,0.8)' }}>
+                              <th style={{ padding: '0.5rem 0.4rem', color: '#4caf50', fontWeight: 700, textAlign: 'left', fontSize: '0.65rem' }}>Spice</th>
+                              <th style={{ padding: '0.5rem 0.4rem', color: '#4caf50', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Buy Qty</th>
+                              <th style={{ padding: '0.5rem 0.4rem', color: '#4caf50', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Avg ₹/Kg</th>
+                              <th style={{ padding: '0.5rem 0.4rem', color: '#4caf50', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Total ₹</th>
+                              {day.totalSellQty > 0 && (
+                                <>
+                                  <th style={{ padding: '0.5rem 0.4rem', color: '#10b981', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Sold</th>
+                                  <th style={{ padding: '0.5rem 0.4rem', color: '#10b981', fontWeight: 700, textAlign: 'right', fontSize: '0.65rem' }}>Sell Avg</th>
+                                </>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {day.spiceBreakdown.map((s, i) => (
+                              <tr key={s.id} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
+                                <td style={{ padding: '0.45rem 0.4rem', fontWeight: 700, color: s.color, whiteSpace: 'nowrap' }}>{s.label}</td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: s.buyQty > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                                  {s.buyQty > 0 ? s.buyQty.toFixed(2) : '-'}
+                                </td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                  {s.buyQty > 0 ? `₹${s.avgBuyPrice}` : '-'}
+                                </td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                  {s.buyValue > 0 ? `₹${Math.round(s.buyValue).toLocaleString('en-IN')}` : '-'}
+                                </td>
+                                {day.totalSellQty > 0 && (
+                                  <>
+                                    <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: s.sellQty > 0 ? '#10b981' : 'var(--text-secondary)' }}>
+                                      {s.sellQty > 0 ? s.sellQty.toFixed(2) : '-'}
+                                    </td>
+                                    <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                      {s.sellQty > 0 ? `₹${s.avgSellPrice}` : '-'}
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Shop breakdown (when viewing all shops) */}
+                  {viewMode === 'all' && day.shopBreakdown.length > 1 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: '0.4rem', fontWeight: 600 }}>PER SHOP</div>
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        {day.shopBreakdown.map(sb => (
+                          <div key={sb.shop} style={{
+                            flex: 1, minWidth: 90,
+                            background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '0.45rem 0.6rem',
+                            border: '1px solid rgba(255,255,255,0.06)',
+                          }}>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--primary-accent)', fontWeight: 700, marginBottom: '0.15rem' }}>{sb.shop}</div>
+                            {sb.buyQty > 0 && (
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>
+                                ↓ {sb.buyQty.toFixed(2)} Kg • ₹{Math.round(sb.buyValue).toLocaleString('en-IN')}
+                              </div>
+                            )}
+                            {sb.sellQty > 0 && (
+                              <div style={{ fontSize: '0.72rem', color: '#10b981' }}>
+                                ↑ {sb.sellQty.toFixed(2)} Kg • ₹{Math.round(sb.sellValue).toLocaleString('en-IN')}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Individual purchase records */}
+                  {day.purchases.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: '0.35rem', fontWeight: 600 }}>PURCHASE RECORDS</div>
+                      {day.purchases.sort((a, b) => new Date(b.date) - new Date(a.date)).map((e, i) => (
+                        <div key={e.id || i} style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: '0.4rem 0', borderBottom: i < day.purchases.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                        }}>
+                          <div>
+                            <span style={{
+                              fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.35rem',
+                              borderRadius: 5, background: 'rgba(59,130,246,0.12)', color: '#58a6ff',
+                              marginRight: '0.4rem',
+                            }}>
+                              ↓ BUY
+                            </span>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {(spices.find(s => s.id === e.type)?.label || e.type)} — {Number(e.qty).toFixed(2)} Kg
+                            </span>
+                            {viewMode === 'all' && (
+                              <span style={{ fontSize: '0.62rem', color: 'var(--text-secondary)', marginLeft: '0.3rem' }}>@ {e.shop}</span>
+                            )}
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                              ₹{Number(e.price)}/Kg
+                            </div>
+                            <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)' }}>
+                              {format(new Date(e.date), 'h:mm a')}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Individual sale records */}
+                  {day.sales.length > 0 && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginBottom: '0.35rem', fontWeight: 600 }}>SALE RECORDS</div>
+                      {day.sales.sort((a, b) => new Date(b.date) - new Date(a.date)).map((s, i) => (
+                        <div key={s.id || i} style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: '0.4rem 0', borderBottom: i < day.sales.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                        }}>
+                          <div>
+                            <span style={{
+                              fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.35rem',
+                              borderRadius: 5, background: 'rgba(16,185,129,0.12)', color: '#10b981',
+                              marginRight: '0.4rem',
+                            }}>
+                              ↑ SALE
+                            </span>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {(spices.find(sp => sp.id === s.type)?.label || s.type)} — {Number(s.qty).toFixed(2)} Kg
+                            </span>
+                            {s.buyerName && <span style={{ fontSize: '0.62rem', color: 'var(--text-secondary)', marginLeft: '0.3rem' }}>→ {s.buyerName}</span>}
+                            {viewMode === 'all' && (
+                              <span style={{ fontSize: '0.62rem', color: 'var(--text-secondary)', marginLeft: '0.3rem' }}>@ {s.shop}</span>
+                            )}
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#10b981' }}>
+                              ₹{Number(s.sellPrice)}/Kg
+                            </div>
+                            <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)' }}>
+                              {format(new Date(s.date), 'h:mm a')}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
