@@ -192,6 +192,47 @@ function buildSummaryMessage(displayDate, purchases, sales) {
     msg += '💰 *Total Sales: ' + saleTotalQty.toFixed(1) + ' kg — ₹' + Math.round(saleTotalValue).toLocaleString('en-IN') + '*\n\n';
   }
   
+  // ── OVERALL SUMMARY (spice-wise net) ──
+  msg += '📋 *OVERALL SUMMARY*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━\n';
+  
+  const allSpices = {};
+  purchases.forEach(e => {
+    if (!allSpices[e.type]) allSpices[e.type] = { bought: 0, boughtVal: 0, sold: 0, soldVal: 0 };
+    allSpices[e.type].bought += e.qty;
+    allSpices[e.type].boughtVal += e.qty * e.price;
+  });
+  sales.forEach(e => {
+    if (!allSpices[e.type]) allSpices[e.type] = { bought: 0, boughtVal: 0, sold: 0, soldVal: 0 };
+    allSpices[e.type].sold += e.qty;
+    allSpices[e.type].soldVal += e.qty * e.price;
+  });
+  
+  let grandBoughtQty = 0, grandBoughtVal = 0, grandSoldQty = 0, grandSoldVal = 0;
+  
+  for (const [type, d] of Object.entries(allSpices)) {
+    const label = CONFIG.SPICE_LABELS[type] || type;
+    const net = d.bought - d.sold;
+    grandBoughtQty += d.bought;
+    grandBoughtVal += d.boughtVal;
+    grandSoldQty += d.sold;
+    grandSoldVal += d.soldVal;
+    
+    let line = '  ' + label + ': ';
+    if (d.bought > 0) line += '📥 ' + d.bought.toFixed(1) + ' kg';
+    if (d.sold > 0) line += ' | 📤 ' + d.sold.toFixed(1) + ' kg';
+    if (d.bought > 0 && d.sold > 0) line += ' | Net: ' + (net > 0 ? '+' : '') + net.toFixed(1) + ' kg';
+    msg += line + '\n';
+  }
+  
+  msg += '\n';
+  if (grandBoughtVal > 0) msg += '💵 Total Spent: ₹' + Math.round(grandBoughtVal).toLocaleString('en-IN') + '\n';
+  if (grandSoldVal > 0) msg += '💰 Total Earned: ₹' + Math.round(grandSoldVal).toLocaleString('en-IN') + '\n';
+  if (grandBoughtVal > 0 && grandSoldVal > 0) {
+    const profit = grandSoldVal - grandBoughtVal;
+    msg += (profit >= 0 ? '📈' : '📉') + ' P&L: ' + (profit >= 0 ? '+' : '') + '₹' + Math.round(Math.abs(profit)).toLocaleString('en-IN') + '\n';
+  }
+  
   msg += '━━━━━━━━━━━━━━━━━━━━\n';
   msg += '🤖 _Auto-sent by KVS Spices_';
   
