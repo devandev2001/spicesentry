@@ -1,8 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil } from 'lucide-react';
 import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+
+// ── Indian Currency Formatter ──
+// Formats numbers as ₹1,25,000 (Indian lakh/crore system)
+const formatINR = (num) => {
+  if (num === null || num === undefined || isNaN(num)) return '₹0';
+  const n = Math.round(Number(num));
+  const s = Math.abs(n).toString();
+  if (s.length <= 3) return `₹${n < 0 ? '-' : ''}${s}`;
+  const last3 = s.slice(-3);
+  const rest = s.slice(0, -3);
+  const formatted = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + last3;
+  return `₹${n < 0 ? '-' : ''}${formatted}`;
+};
 
 const SHOPS = ['20 Acre', 'Anachal', 'Kallar'];
 const SPICES = [
@@ -20,9 +33,52 @@ const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV9
 // Helper: Send data to Google Apps Script via GET with payload as URL param
 // (Google Apps Script redirects POST to a URL that only accepts GET,
 //  so we encode the payload in a query parameter instead)
+// ── Offline Queue ──
+const OFFLINE_QUEUE_KEY = 'spicesentry_offline_queue';
+
+function getOfflineQueue() {
+  try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveOfflineQueue(queue) {
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+}
+
 function postToSheet(payload) {
+  if (!navigator.onLine) {
+    const queue = getOfflineQueue();
+    queue.push(payload);
+    saveOfflineQueue(queue);
+    console.log('Offline: queued payload', payload);
+    return Promise.resolve();
+  }
   const url = GSHEET_URL + '?data=' + encodeURIComponent(JSON.stringify(payload));
-  return fetch(url, { redirect: 'follow' }).catch(err => console.error('Sheet sync error:', err));
+  return fetch(url, { redirect: 'follow' }).catch(err => {
+    // Network error — queue for retry
+    const queue = getOfflineQueue();
+    queue.push(payload);
+    saveOfflineQueue(queue);
+    console.error('Sheet sync error, queued for retry:', err);
+  });
+}
+
+async function flushOfflineQueue() {
+  const queue = getOfflineQueue();
+  if (queue.length === 0) return;
+  console.log(`Flushing ${queue.length} offline queued items…`);
+  const remaining = [];
+  for (const payload of queue) {
+    try {
+      const url = GSHEET_URL + '?data=' + encodeURIComponent(JSON.stringify(payload));
+      await fetch(url, { redirect: 'follow' });
+    } catch {
+      remaining.push(payload);
+    }
+  }
+  saveOfflineQueue(remaining);
+  if (remaining.length === 0) console.log('Offline queue flushed.');
+  else console.log(`${remaining.length} items still queued.`);
 }
 
 function buildDefaultLoads() {
@@ -40,6 +96,7 @@ function App() {
   const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   // Custom confirm modal (replaces native confirm() for beautiful UI)
   const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm }
@@ -127,6 +184,23 @@ function App() {
     refreshFromSheets();
     const interval = setInterval(() => refreshFromSheets(true), 500);
     return () => clearInterval(interval);
+  }, []);
+
+  // ── Flush offline queue when connectivity is restored ──
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      flushOfflineQueue().then(() => refreshFromSheets(true));
+    };
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    // Also flush on mount if online & queue exists
+    if (navigator.onLine) flushOfflineQueue();
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   // Debounced localStorage cache — only writes once every 5 seconds max
@@ -286,6 +360,31 @@ function App() {
         .then(() => refreshFromSheets(true))
         .catch(err => console.error("Error deleting sale from Sheets:", err));
     }
+  };
+
+  // ── Edit Entry / Sale ──
+  const handleEditEntry = async (id, updates) => {
+    // Update locally
+    setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+    // Delete old + insert new on Sheets
+    await postToSheet({ kind: 'delete_entry', id: id.toString() });
+    const entry = entries.find(e => e.id === id);
+    if (entry) {
+      const updated = { ...entry, ...updates, kind: 'entry' };
+      await postToSheet(updated);
+    }
+    refreshFromSheets(true);
+  };
+
+  const handleEditSale = async (id, updates) => {
+    setSales(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+    await postToSheet({ kind: 'delete_sale', id: id.toString() });
+    const sale = sales.find(s => s.id === id);
+    if (sale) {
+      const updated = { ...sale, ...updates, kind: 'sale' };
+      await postToSheet(updated);
+    }
+    refreshFromSheets(true);
   };
 
   // Dispatch modal state
@@ -482,6 +581,18 @@ function App() {
       )}
       <style>{`@keyframes syncPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
 
+      {/* Offline banner */}
+      {isOffline && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9998,
+          padding: '0.4rem 1rem', textAlign: 'center',
+          background: 'rgba(234,179,8,0.15)', borderBottom: '1px solid rgba(234,179,8,0.3)',
+          color: '#eab308', fontSize: '0.75rem', fontWeight: 600,
+        }}>
+          📡 Offline — changes saved locally, will sync when back online
+        </div>
+      )}
+
       {/* ── Custom Confirm Modal ── */}
       {confirmModal && (
         <div style={{
@@ -566,6 +677,8 @@ function App() {
             shopLoads={shopLoads}
             onDeleteEntry={handleDeleteEntry}
             onDeleteSale={handleDeleteSale}
+            onEditEntry={handleEditEntry}
+            onEditSale={handleEditSale}
           />
         )}
       </div>
@@ -670,7 +783,7 @@ function App() {
                 background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
                 borderRadius: 8, fontSize: '0.8rem', color: '#10b981',
               }}>
-                Total: ₹{(dispatchModal.remainingQty * parseFloat(dispatchPrice)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                Total: {formatINR(dispatchModal.remainingQty * parseFloat(dispatchPrice))}
               </div>
             )}
 
@@ -777,7 +890,7 @@ function App() {
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Avg Buy Price</div>
-                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>₹{tfAvgPrice}/Kg</div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{formatINR(tfAvgPrice)}/Kg</div>
               </div>
             </div>
 
@@ -850,7 +963,7 @@ function App() {
                 display: 'flex', justifyContent: 'space-between',
               }}>
                 <span>Transfer Value</span>
-                <span style={{ fontWeight: 700 }}>₹{(parseFloat(tfQty) * parseFloat(tfPrice)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                <span style={{ fontWeight: 700 }}>{formatINR(parseFloat(tfQty) * parseFloat(tfPrice))}</span>
               </div>
             )}
 
@@ -1067,7 +1180,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
               }}>
                 <p className="subtitle" style={{ fontSize: '0.7rem' }}>{spice.label}</p>
                 <div className="stat-value" style={{ fontSize: '1.3rem', fontWeight: 700, color: spice.color }}>
-                  ₹{spice.avgPrice} <span className="stat-unit" style={{ fontSize: '0.6rem' }}>/Kg</span>
+                  {formatINR(spice.avgPrice)} <span className="stat-unit" style={{ fontSize: '0.6rem' }}>/Kg</span>
                 </div>
                 <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0.35rem 0 0.3rem' }}>
                   {spice.totalQty.toFixed(2)} Kg total
@@ -1111,7 +1224,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.4rem' }}>
               <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Buy Avg</span>
               <span style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color }}>
-                ₹{spice.avgBuyPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
+                {formatINR(spice.avgBuyPrice)} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
               </span>
             </div>
 
@@ -1121,7 +1234,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.25rem' }}>
                   <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Sell Avg</span>
                   <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#10b981' }}>
-                    ₹{spice.avgSellPrice} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
+                    {formatINR(spice.avgSellPrice)} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
                   </span>
                 </div>
 
@@ -1137,7 +1250,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                     {spice.profitPerKg >= 0 ? '▲ Profit' : '▼ Loss'}/Kg
                   </span>
                   <span style={{ fontSize: '0.8rem', fontWeight: 700, color: spice.profitPerKg >= 0 ? '#10b981' : 'var(--danger)' }}>
-                    ₹{Math.abs(spice.profitPerKg)}
+                    {formatINR(Math.abs(spice.profitPerKg))}
                   </span>
                 </div>
               </>
@@ -1148,7 +1261,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                 <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Stock Value</span>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  ₹{spice.remainingValue.toLocaleString('en-IN')}
+                  {formatINR(spice.remainingValue)}
                 </span>
               </div>
             )}
@@ -1205,6 +1318,53 @@ function AddEntry({ onAdd, shops, spices }) {
   const [type, setType] = useState(spices[0].id);
   const [qty, setQty] = useState('');
   const [price, setPrice] = useState('');
+  const [listening, setListening] = useState(false);
+  const [voiceText, setVoiceText] = useState('');
+  const recognitionRef = useRef(null);
+
+  // ── Voice Entry via Web Speech API ──
+  const toggleVoice = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return alert('Voice input not supported in this browser.');
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-IN';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.toLowerCase();
+      setVoiceText(transcript);
+      parseVoiceInput(transcript);
+      setListening(false);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.start();
+    setListening(true);
+  };
+
+  const parseVoiceInput = (text) => {
+    // Match spice
+    const spiceMap = { cardamom: 'cardamom', pepper: 'pepper', nutmeg: 'nutmeg', 'nutmeg mace': 'nutmeg_mace', coffee: 'coffee', clove: 'clove' };
+    for (const [keyword, id] of Object.entries(spiceMap)) {
+      if (text.includes(keyword)) { setType(id); break; }
+    }
+    // Match shop
+    const shopMap = { '20 acre': '20 Acre', 'twenty acre': '20 Acre', anachal: 'Anachal', kallar: 'Kallar' };
+    for (const [keyword, name] of Object.entries(shopMap)) {
+      if (text.includes(keyword)) { setShop(name); break; }
+    }
+    // Extract numbers — pattern: first number = qty, second = price
+    const nums = text.match(/[\d]+(?:\.[\d]+)?/g);
+    if (nums && nums.length >= 1) setQty(nums[0]);
+    if (nums && nums.length >= 2) setPrice(nums[1]);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -1222,8 +1382,35 @@ function AddEntry({ onAdd, shops, spices }) {
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
-      <h1 className="title">Add Purchase</h1>
-      <p className="subtitle" style={{marginBottom: '1.5rem'}}>Select branch and enter details</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <div>
+          <h1 className="title">Add Purchase</h1>
+          <p className="subtitle">Select branch and enter details</p>
+        </div>
+        <button
+          onClick={toggleVoice}
+          style={{
+            width: 48, height: 48, borderRadius: '50%',
+            border: listening ? '2px solid #f87171' : '2px solid rgba(88,166,255,0.3)',
+            background: listening ? 'rgba(248,113,113,0.15)' : 'rgba(88,166,255,0.08)',
+            color: listening ? '#f87171' : '#58a6ff',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none',
+            flexShrink: 0,
+          }}
+        >
+          {listening ? <MicOff size={22} /> : <Mic size={22} />}
+        </button>
+      </div>
+      {voiceText && (
+        <div style={{
+          marginBottom: '1rem', padding: '0.5rem 0.75rem', borderRadius: 8,
+          background: 'rgba(88,166,255,0.08)', border: '1px solid rgba(88,166,255,0.2)',
+          fontSize: '0.75rem', color: '#58a6ff',
+        }}>
+          🎙️ "{voiceText}"
+        </div>
+      )}
 
       <div className="shop-selector">
         {shops.map(s => (
@@ -1278,7 +1465,7 @@ function AddEntry({ onAdd, shops, spices }) {
         <div className="input-group" style={{ marginBottom: '2rem' }}>
           <label className="input-label">Total Value</label>
           <div className="stat-value" style={{ fontSize: '1.5rem', color: selectedSpice.color }}>
-            ₹ {qty && price ? (parseFloat(qty) * parseFloat(price)).toFixed(2) : '0.00'}
+            {qty && price ? formatINR(parseFloat(qty) * parseFloat(price)) : '₹0'}
           </div>
         </div>
 
@@ -1379,13 +1566,13 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
         {availableQty > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
             <span className="subtitle" style={{ fontSize: '0.7rem' }}>Current Avg Buy</span>
-            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>₹{avgBuyPrice}/Kg</span>
+            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{formatINR(avgBuyPrice)}/Kg</span>
           </div>
         )}
         {availableQty > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.2rem' }}>
             <span className="subtitle" style={{ fontSize: '0.7rem' }}>Stock Value</span>
-            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>₹{remainingValue > 0 ? remainingValue.toLocaleString('en-IN') : '0'}</span>
+            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{formatINR(remainingValue > 0 ? remainingValue : 0)}</span>
           </div>
         )}
       </div>
@@ -1430,11 +1617,11 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
           <label className="input-label">Sale Summary</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.25rem' }}>
             <div className="stat-value" style={{ fontSize: '1.5rem', color: selectedSpice.color }}>
-              ₹ {qty && sellPrice ? (parseFloat(qty) * parseFloat(sellPrice)).toFixed(2) : '0.00'}
+              {qty && sellPrice ? formatINR(parseFloat(qty) * parseFloat(sellPrice)) : '₹0'}
             </div>
             {profit !== null && (
               <span style={{ fontSize: '0.78rem', fontWeight: 600, color: parseFloat(profit) >= 0 ? '#10b981' : 'var(--danger)' }}>
-                {parseFloat(profit) >= 0 ? '▲' : '▼'} ₹{Math.abs(parseFloat(profit)).toLocaleString('en-IN')} {parseFloat(profit) >= 0 ? 'profit' : 'loss'} vs current avg
+                {parseFloat(profit) >= 0 ? '▲' : '▼'} {formatINR(Math.abs(parseFloat(profit)))} {parseFloat(profit) >= 0 ? 'profit' : 'loss'} vs current avg
               </span>
             )}
             {previewAvg !== null && qty && sellPrice && parseFloat(qty) > 0 && (
@@ -1442,12 +1629,12 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>After sale: {previewQty.toFixed(2)} Kg left</span>
                   <span style={{ fontWeight: 700, color: previewAvg < avgBuyPrice ? '#10b981' : previewAvg > avgBuyPrice ? 'var(--danger)' : 'var(--text-primary)' }}>
-                    Avg ₹{previewAvg}/Kg
+                    Avg {formatINR(previewAvg)}/Kg
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginTop: '0.15rem' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Stock value</span>
-                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>₹{previewValue > 0 ? Math.round(previewValue).toLocaleString('en-IN') : '0'}</span>
+                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{formatINR(previewValue > 0 ? Math.round(previewValue) : 0)}</span>
                 </div>
               </div>
             )}
@@ -1754,11 +1941,11 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
             <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(59,130,246,0.15)' }}>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Purchased</div>
               <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#58a6ff' }}>{grandTotalBuyQty.toFixed(2)} Kg</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>₹{Math.round(grandTotalBuyValue).toLocaleString('en-IN')}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{formatINR(grandTotalBuyValue)}</div>
             </div>
             <div style={{ background: 'rgba(76,175,80,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(76,175,80,0.15)' }}>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Avg Buy Price</div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#4caf50' }}>₹{grandAvgBuyPrice}</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#4caf50' }}>{formatINR(grandAvgBuyPrice)}</div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>per Kg</div>
             </div>
             {grandTotalSellQty > 0 && (
@@ -1766,7 +1953,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                 <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(16,185,129,0.15)' }}>
                   <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Sold</div>
                   <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#10b981' }}>{grandTotalSellQty.toFixed(2)} Kg</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>₹{Math.round(grandTotalSellValue).toLocaleString('en-IN')}</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{formatINR(grandTotalSellValue)}</div>
                 </div>
                 <div style={{
                   background: grandTotalSellValue - grandTotalBuyValue >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
@@ -1778,7 +1965,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                     fontSize: '1.05rem', fontWeight: 800,
                     color: grandTotalSellValue - grandTotalBuyValue >= 0 ? '#10b981' : '#f87171',
                   }}>
-                    {grandTotalSellValue - grandTotalBuyValue >= 0 ? '+' : ''}₹{Math.round(grandTotalSellValue - grandTotalBuyValue).toLocaleString('en-IN')}
+                    {grandTotalSellValue - grandTotalBuyValue >= 0 ? '+' : ''}{formatINR(grandTotalSellValue - grandTotalBuyValue)}
                   </div>
                 </div>
               </>
@@ -1801,7 +1988,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                     display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 72,
                   }}>
                     <span style={{ fontSize: '0.6rem', color: spice.color, fontWeight: 700 }}>{spice.label}</span>
-                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>₹{(val / qty).toFixed(2)}</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>{formatINR((val / qty).toFixed(2))}</span>
                     <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>{qty.toFixed(2)} Kg</span>
                   </div>
                 );
@@ -1845,8 +2032,8 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                 {format(thisMonthStart, 'MMM yyyy')}
               </div>
               <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{thisMonth.totalBuyQty.toFixed(1)} Kg</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>₹{Math.round(thisMonth.totalBuyValue).toLocaleString('en-IN')}</div>
-              <div style={{ fontSize: '0.7rem', color: '#a855f7', fontWeight: 600, marginTop: '0.15rem' }}>Avg ₹{thisMonth.avgBuyPrice}/Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{formatINR(thisMonth.totalBuyValue)}</div>
+              <div style={{ fontSize: '0.7rem', color: '#a855f7', fontWeight: 600, marginTop: '0.15rem' }}>Avg {formatINR(thisMonth.avgBuyPrice)}/Kg</div>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{thisMonth.entryCount} entries</div>
             </div>
             {/* Last month */}
@@ -1855,8 +2042,8 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                 {format(lastMonthStart, 'MMM yyyy')}
               </div>
               <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{lastMonth.totalBuyQty.toFixed(1)} Kg</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>₹{Math.round(lastMonth.totalBuyValue).toLocaleString('en-IN')}</div>
-              <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600, marginTop: '0.15rem' }}>Avg ₹{lastMonth.avgBuyPrice}/Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{formatINR(lastMonth.totalBuyValue)}</div>
+              <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600, marginTop: '0.15rem' }}>Avg {formatINR(lastMonth.avgBuyPrice)}/Kg</div>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{lastMonth.entryCount} entries</div>
             </div>
           </div>
@@ -1918,8 +2105,8 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                         <td style={{ padding: '0.45rem 0.4rem', fontWeight: 700, color: spice.color, whiteSpace: 'nowrap' }}>{spice.label}</td>
                         <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-primary)' }}>{tmQty > 0 ? `${tmQty.toFixed(1)} Kg` : '-'}</td>
                         <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{lmQty > 0 ? `${lmQty.toFixed(1)} Kg` : '-'}</td>
-                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>{tmAvg > 0 ? `₹${tmAvg}` : '-'}</td>
-                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{lmAvg > 0 ? `₹${lmAvg}` : '-'}</td>
+                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>{tmAvg > 0 ? formatINR(tmAvg) : '-'}</td>
+                        <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{lmAvg > 0 ? formatINR(lmAvg) : '-'}</td>
                         <td style={{
                           padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700,
                           color: change === null ? 'var(--text-secondary)' : Number(change) <= 0 ? '#10b981' : '#f87171',
@@ -1990,7 +2177,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                     </div>
                   )}
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    ₹{Math.round(day.totalBuyValue).toLocaleString('en-IN')}
+                    {formatINR(day.totalBuyValue)}
                   </div>
                   <span style={{
                     fontSize: '0.85rem', color: 'var(--text-secondary)',
@@ -2033,10 +2220,10 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                                   {s.buyQty > 0 ? s.buyQty.toFixed(2) : '-'}
                                 </td>
                                 <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                                  {s.buyQty > 0 ? `₹${s.avgBuyPrice}` : '-'}
+                                  {s.buyQty > 0 ? formatINR(s.avgBuyPrice) : '-'}
                                 </td>
                                 <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)' }}>
-                                  {s.buyValue > 0 ? `₹${Math.round(s.buyValue).toLocaleString('en-IN')}` : '-'}
+                                  {s.buyValue > 0 ? formatINR(s.buyValue) : '-'}
                                 </td>
                                 {day.totalSellQty > 0 && (
                                   <>
@@ -2044,7 +2231,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                                       {s.sellQty > 0 ? s.sellQty.toFixed(2) : '-'}
                                     </td>
                                     <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                                      {s.sellQty > 0 ? `₹${s.avgSellPrice}` : '-'}
+                                      {s.sellQty > 0 ? formatINR(s.avgSellPrice) : '-'}
                                     </td>
                                   </>
                                 )}
@@ -2070,12 +2257,12 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                             <div style={{ fontSize: '0.65rem', color: 'var(--primary-accent)', fontWeight: 700, marginBottom: '0.15rem' }}>{sb.shop}</div>
                             {sb.buyQty > 0 && (
                               <div style={{ fontSize: '0.72rem', color: 'var(--text-primary)' }}>
-                                ↓ {sb.buyQty.toFixed(2)} Kg • ₹{Math.round(sb.buyValue).toLocaleString('en-IN')}
+                                ↓ {sb.buyQty.toFixed(2)} Kg • {formatINR(sb.buyValue)}
                               </div>
                             )}
                             {sb.sellQty > 0 && (
                               <div style={{ fontSize: '0.72rem', color: '#10b981' }}>
-                                ↑ {sb.sellQty.toFixed(2)} Kg • ₹{Math.round(sb.sellValue).toLocaleString('en-IN')}
+                                ↑ {sb.sellQty.toFixed(2)} Kg • {formatINR(sb.sellValue)}
                               </div>
                             )}
                           </div>
@@ -2110,7 +2297,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                              ₹{Number(e.price)}/Kg
+                              {formatINR(Number(e.price))}/Kg
                             </div>
                             <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)' }}>
                               {format(new Date(e.date), 'h:mm a')}
@@ -2148,7 +2335,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#10b981' }}>
-                              ₹{Number(s.sellPrice)}/Kg
+                              {formatINR(Number(s.sellPrice))}/Kg
                             </div>
                             <div style={{ fontSize: '0.62rem', color: 'var(--text-secondary)' }}>
                               {format(new Date(s.date), 'h:mm a')}
@@ -2168,12 +2355,15 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
   );
 }
 
-function History({ entries, sales, selectedShop, onSelectShop, shops, spices, shopLoads, onDeleteEntry, onDeleteSale }) {
+function History({ entries, sales, selectedShop, onSelectShop, shops, spices, shopLoads, onDeleteEntry, onDeleteSale, onEditEntry, onEditSale }) {
   // Date range filter state
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all', 'purchase', 'sale'
   const [pdfPages, setPdfPages] = useState(null); // HTML report data for viewer
+  const [editRecord, setEditRecord] = useState(null); // { ...record } being edited
+  const [editQty, setEditQty] = useState('');
+  const [editPrice, setEditPrice] = useState('');
 
   // Merge purchases + sales, sort newest first
   const allRecords = [
@@ -2203,7 +2393,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   // ── Build report data for HTML viewer ──
   const buildShopReportData = () => {
-    const R = (val) => `₹${val}`;
+    const R = (val) => formatINR(val);
     const dateFilter = (item) => {
       if (dateFrom) { const from = new Date(dateFrom); from.setHours(0,0,0,0); if (new Date(item.date) < from) return false; }
       if (dateTo) { const to = new Date(dateTo); to.setHours(23,59,59,999); if (new Date(item.date) > to) return false; }
@@ -2379,7 +2569,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     y += 6;
 
     // ── Rupee helper (Helvetica doesn't have ₹) ──
-    const R = (val) => `Rs.${val}`;
+    const R = (val) => formatINR(val).replace('₹', 'Rs.');
 
     // ── Date filter helper for PDF ──
     const dateFilter = (item) => {
@@ -2421,7 +2611,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         soldQty.toFixed(2),
         avgSell,
         remainingQty.toFixed(2),
-        remainingValue > 0 ? Math.round(remainingValue).toLocaleString('en-IN') : '0',
+        remainingValue > 0 ? Math.round(remainingValue) : 0,
         profit,
       ];
     }).filter(row => Number(row[1]) > 0 || Number(row[3]) > 0);
@@ -2462,7 +2652,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               if (v && v !== '-') {
                 const num = parseFloat(v);
                 data.cell.styles.textColor = num >= 0 ? green : red;
-                data.cell.text = [`${num >= 0 ? '+' : ''}${R(Math.round(num).toLocaleString('en-IN'))}`];
+                data.cell.text = [`${num >= 0 ? '+' : ''}${R(num)}`];
               }
             }
           }
@@ -2497,10 +2687,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const colW = (pageW - margin * 2) / 4;
     const labels = ['Total Invested', 'Total Sold', 'Remaining Value', 'Net Profit'];
     const values = [
-      R(Math.round(totals.totalBuyValue).toLocaleString('en-IN')),
-      R(Math.round(totals.totalSellValue).toLocaleString('en-IN')),
-      R(Math.round(totalRemainingValue).toLocaleString('en-IN')),
-      `${totalProfit >= 0 ? '+' : ''}${R(Math.round(totalProfit).toLocaleString('en-IN'))}`,
+      R(totals.totalBuyValue),
+      R(totals.totalSellValue),
+      R(totalRemainingValue),
+      `${totalProfit >= 0 ? '+' : ''}${R(totalProfit)}`,
     ];
     const valColors = [white, accent, white, totalProfit >= 0 ? green : red];
 
@@ -2528,8 +2718,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         format(new Date(e.date), 'dd MMM yy'),
         e.type.replace('_', ' '),
         `${Number(e.qty).toFixed(2)} Kg`,
-        R(Number(e.price).toLocaleString('en-IN')),
-        R(Math.round(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')),
+        R(Number(e.price)),
+        R(Number(e.qty) * Number(e.price)),
       ]);
 
       autoTable(doc, {
@@ -2558,8 +2748,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         format(new Date(s.date), 'dd MMM yy'),
         s.type.replace('_', ' '),
         `${Number(s.qty).toFixed(2)} Kg`,
-        R(Number(s.sellPrice).toLocaleString('en-IN')),
-        R(Math.round(Number(s.qty) * Number(s.sellPrice)).toLocaleString('en-IN')),
+        R(Number(s.sellPrice)),
+        R(Number(s.qty) * Number(s.sellPrice)),
         s.buyerName || '-',
       ]);
 
@@ -2626,7 +2816,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const grey = [140, 150, 165];
     const white = [255, 255, 255];
     const lightGrey = [210, 215, 225];
-    const R = (val) => `Rs.${val}`;
+    const R = (val) => formatINR(val).replace('₹', 'Rs.');
 
     const drawPageBg = () => { doc.setFillColor(...dark); doc.rect(0, 0, pageW, pageH, 'F'); };
     const drawTopStripe = () => { doc.setFillColor(...brandGreen); doc.rect(0, 0, pageW, 3, 'F'); };
@@ -2683,7 +2873,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
         const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty).toFixed(2) : '-';
         return [spice.label, totalQty.toFixed(2), avgBuy, soldQty.toFixed(2), avgSell, remainingQty.toFixed(2),
-          remainingValue > 0 ? Math.round(remainingValue).toLocaleString('en-IN') : '0', profit];
+          remainingValue > 0 ? Math.round(remainingValue) : 0, profit];
       }).filter(row => Number(row[1]) > 0 || Number(row[3]) > 0);
 
       if (shopSummary.length > 0) {
@@ -2706,7 +2896,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
             if (data.section === 'body') {
               if (data.column.index === 2 || data.column.index === 4) { const v = data.cell.raw; if (v && v !== '-') data.cell.text = [R(v)]; }
               if (data.column.index === 6) data.cell.text = [R(data.cell.raw)];
-              if (data.column.index === 7) { const v = data.cell.raw; if (v && v !== '-') { const num = parseFloat(v); data.cell.styles.textColor = num >= 0 ? green : red; data.cell.text = [`${num >= 0 ? '+' : ''}${R(Math.round(num).toLocaleString('en-IN'))}`]; } }
+              if (data.column.index === 7) { const v = data.cell.raw; if (v && v !== '-') { const num = parseFloat(v); data.cell.styles.textColor = num >= 0 ? green : red; data.cell.text = [`${num >= 0 ? '+' : ''}${R(num)}`]; } }
             }
           },
         });
@@ -2744,10 +2934,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const colW = (pageW - margin * 2) / 4;
     const gLabels = ['Total Invested', 'Total Sold', 'Remaining Value', 'Net Profit'];
     const gValues = [
-      R(Math.round(grandTotals.buyValue).toLocaleString('en-IN')),
-      R(Math.round(grandTotals.sellValue).toLocaleString('en-IN')),
-      R(Math.round(gRemVal).toLocaleString('en-IN')),
-      `${gProfit >= 0 ? '+' : ''}${R(Math.round(gProfit).toLocaleString('en-IN'))}`,
+      R(grandTotals.buyValue),
+      R(grandTotals.sellValue),
+      R(gRemVal),
+      `${gProfit >= 0 ? '+' : ''}${R(gProfit)}`,
     ];
     const gColors = [white, accent, white, gProfit >= 0 ? green : red];
     gLabels.forEach((label, i) => {
@@ -2924,13 +3114,30 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                   {format(new Date(r.date), 'MMM d, yyyy - h:mm a')}
-                  {' • '}₹{r.kind === 'sale' ? r.sellPrice : r.price}/kg
+                  {' • '}{formatINR(r.kind === 'sale' ? r.sellPrice : r.price)}/kg
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <div style={{ fontWeight: 700, fontSize: '1rem', color: r.kind === 'sale' ? '#10b981' : 'var(--text-primary)', textAlign: 'right' }}>
-                  ₹{r.totalValue ? r.totalValue.toFixed(2) : (r.qty * (r.sellPrice || r.price)).toFixed(2)}
+                  {formatINR(r.totalValue ? r.totalValue : (r.qty * (r.sellPrice || r.price)))}
                 </div>
+                <button
+                  onClick={() => {
+                    setEditRecord(r);
+                    setEditQty(String(r.qty));
+                    setEditPrice(String(r.kind === 'sale' ? r.sellPrice : r.price));
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 30, height: 30, borderRadius: 8,
+                    border: '1px solid rgba(88,166,255,0.25)',
+                    background: 'rgba(88,166,255,0.08)',
+                    color: '#58a6ff', cursor: 'pointer',
+                    transition: 'all 0.15s ease', flexShrink: 0,
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
                 <button
                   onClick={() => r.kind === 'sale' ? onDeleteSale(r.id) : onDeleteEntry(r.id)}
                   style={{
@@ -2952,6 +3159,71 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
           ))
         )}
       </div>
+
+      {/* ── Edit Record Modal ── */}
+      {editRecord && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 10000, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'fadeIn 0.2s ease-in-out',
+        }} onClick={() => setEditRecord(null)}>
+          <div style={{
+            background: 'var(--card-bg)', borderRadius: 16, padding: '1.5rem',
+            width: '90%', maxWidth: 380,
+            border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', color: 'var(--text-primary)' }}>
+              <Pencil size={16} style={{ marginRight: 6, verticalAlign: -2 }} />
+              Edit {editRecord.kind === 'sale' ? 'Sale' : 'Purchase'}
+            </h3>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              {editRecord.type.replace('_', ' ')} • {editRecord.shop} • {format(new Date(editRecord.date), 'dd MMM yyyy')}
+            </div>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Quantity (Kg)</label>
+              <input type="number" step="0.01" value={editQty} onChange={e => setEditQty(e.target.value)}
+                className="modern-input" style={{ width: '100%' }} />
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>
+                {editRecord.kind === 'sale' ? 'Sell Price per Kg (₹)' : 'Buy Price per Kg (₹)'}
+              </label>
+              <input type="number" step="0.01" value={editPrice} onChange={e => setEditPrice(e.target.value)}
+                className="modern-input" style={{ width: '100%' }} />
+            </div>
+            {editQty && editPrice && (
+              <div style={{ marginBottom: '1rem', padding: '0.6rem 0.75rem', borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>New Total</div>
+                <div style={{ fontSize: '1.2rem', fontWeight: 800, color: editRecord.kind === 'sale' ? '#10b981' : 'var(--text-primary)' }}>
+                  {formatINR(parseFloat(editQty) * parseFloat(editPrice))}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button onClick={() => setEditRecord(null)}
+                style={{
+                  flex: 1, padding: '0.65rem', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+                }}>Cancel</button>
+              <button onClick={() => {
+                if (!editQty || !editPrice) return;
+                const updates = editRecord.kind === 'sale'
+                  ? { qty: parseFloat(editQty), sellPrice: parseFloat(editPrice) }
+                  : { qty: parseFloat(editQty), price: parseFloat(editPrice) };
+                if (editRecord.kind === 'sale') onEditSale(editRecord.id, updates);
+                else onEditEntry(editRecord.id, updates);
+                setEditRecord(null);
+              }}
+                style={{
+                  flex: 1, padding: '0.65rem', borderRadius: 10, border: 'none',
+                  background: '#58a6ff', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                }}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Full-screen HTML Report Viewer ── */}
       {pdfPages && (
@@ -3027,15 +3299,15 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                             <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
                               <td style={{ padding: '0.45rem 0.4rem', fontWeight: 700, color: r.color || '#fff', whiteSpace: 'nowrap' }}>{r.label}</td>
                               <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.totalQty.toFixed(1)}</td>
-                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>₹{r.avgBuy}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatINR(r.avgBuy)}</td>
                               <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.soldQty.toFixed(1)}</td>
-                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.avgSell === '-' ? '-' : `₹${r.avgSell}`}</td>
+                              <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.avgSell === '-' ? '-' : formatINR(r.avgSell)}</td>
                               <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700, color: '#fff' }}>{r.remainingQty.toFixed(1)}</td>
                               <td style={{
                                 padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700,
                                 color: r.profit === null ? 'var(--text-secondary)' : r.profit >= 0 ? '#10b981' : '#f87171',
                               }}>
-                                {r.profit === null ? '-' : `${r.profit >= 0 ? '+' : ''}₹${Math.round(r.profit).toLocaleString('en-IN')}`}
+                                {r.profit === null ? '-' : `${r.profit >= 0 ? '+' : ''}${formatINR(r.profit)}`}
                               </td>
                             </tr>
                           ))}
@@ -3051,10 +3323,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem',
                   }}>
                     {[
-                      { label: 'Total Invested', value: `₹${Math.round(shopData.totals.totalBuyValue).toLocaleString('en-IN')}`, color: '#fff' },
-                      { label: 'Total Sold', value: `₹${Math.round(shopData.totals.totalSellValue).toLocaleString('en-IN')}`, color: '#58a6ff' },
-                      { label: 'Remaining', value: `₹${Math.round(shopData.totals.totalBuyValue - shopData.totals.totalSellValue).toLocaleString('en-IN')}`, color: '#fff' },
-                      { label: 'Net Profit', value: `${shopData.totals.totalProfit >= 0 ? '+' : ''}₹${Math.round(shopData.totals.totalProfit).toLocaleString('en-IN')}`, color: shopData.totals.totalProfit >= 0 ? '#10b981' : '#f87171' },
+                      { label: 'Total Invested', value: formatINR(shopData.totals.totalBuyValue), color: '#fff' },
+                      { label: 'Total Sold', value: formatINR(shopData.totals.totalSellValue), color: '#58a6ff' },
+                      { label: 'Remaining', value: formatINR(shopData.totals.totalBuyValue - shopData.totals.totalSellValue), color: '#fff' },
+                      { label: 'Net Profit', value: `${shopData.totals.totalProfit >= 0 ? '+' : ''}${formatINR(shopData.totals.totalProfit)}`, color: shopData.totals.totalProfit >= 0 ? '#10b981' : '#f87171' },
                     ].map((t, i) => (
                       <div key={i} style={{
                         background: 'rgba(22,27,34,0.8)', borderRadius: 10, padding: '0.6rem 0.75rem',
@@ -3088,8 +3360,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                               <td style={{ padding: '0.4rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{format(new Date(e.date), 'dd MMM yy')}</td>
                               <td style={{ padding: '0.4rem', fontWeight: 600, color: '#fff' }}>{e.type.replace('_', ' ')}</td>
                               <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{Number(e.qty).toFixed(2)}</td>
-                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>₹{Number(e.price).toLocaleString('en-IN')}</td>
-                              <td style={{ padding: '0.4rem', textAlign: 'right', fontWeight: 700, color: '#fff' }}>₹{Math.round(Number(e.qty) * Number(e.price)).toLocaleString('en-IN')}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatINR(Number(e.price))}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', fontWeight: 700, color: '#fff' }}>{formatINR(Number(e.qty) * Number(e.price))}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -3119,8 +3391,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                               <td style={{ padding: '0.4rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{format(new Date(s.date), 'dd MMM yy')}</td>
                               <td style={{ padding: '0.4rem', fontWeight: 600, color: '#fff' }}>{s.type.replace('_', ' ')}</td>
                               <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{Number(s.qty).toFixed(2)}</td>
-                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>₹{Number(s.sellPrice).toLocaleString('en-IN')}</td>
-                              <td style={{ padding: '0.4rem', textAlign: 'right', fontWeight: 700, color: '#10b981' }}>₹{Math.round(Number(s.qty) * Number(s.sellPrice)).toLocaleString('en-IN')}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatINR(Number(s.sellPrice))}</td>
+                              <td style={{ padding: '0.4rem', textAlign: 'right', fontWeight: 700, color: '#10b981' }}>{formatINR(Number(s.qty) * Number(s.sellPrice))}</td>
                               <td style={{ padding: '0.4rem', color: 'var(--text-secondary)' }}>{s.buyerName || '-'}</td>
                             </tr>
                           ))}

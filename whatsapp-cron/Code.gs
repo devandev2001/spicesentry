@@ -72,6 +72,151 @@ function sendDailySummary() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// WEEKLY SUMMARY — triggered every Sunday at 10 PM
+// Add a second trigger: Function: sendWeeklySummary
+//   Event source: Time-driven → Week timer → Every Sunday → 10pm-11pm
+// ═══════════════════════════════════════════════════════════
+function sendWeeklySummary() {
+  const today = new Date();
+  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const fromStr = Utilities.formatDate(weekAgo, 'Asia/Kolkata', 'yyyy-MM-dd');
+  const toStr   = Utilities.formatDate(today, 'Asia/Kolkata', 'yyyy-MM-dd');
+  const displayFrom = Utilities.formatDate(weekAgo, 'Asia/Kolkata', 'dd MMM');
+  const displayTo   = Utilities.formatDate(today, 'Asia/Kolkata', 'dd MMM yyyy');
+
+  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const purchaseSheet = ss.getSheetByName('Sheet1');
+  const salesSheet    = ss.getSheetByName('Sales');
+
+  const purchases = getEntriesInRange(purchaseSheet, fromStr, toStr);
+  const sales     = getEntriesInRange(salesSheet, fromStr, toStr);
+
+  if (purchases.length === 0 && sales.length === 0) {
+    Logger.log('No entries this week — skipping weekly summary.');
+    return;
+  }
+
+  const message = buildWeeklyMessage(displayFrom, displayTo, purchases, sales);
+  sendWhatsAppMessage(message);
+  Logger.log('✅ Weekly WhatsApp summary sent for ' + displayFrom + ' – ' + displayTo);
+}
+
+/**
+ * Read entries within a date range [fromStr..toStr] inclusive (yyyy-MM-dd)
+ */
+function getEntriesInRange(sheet, fromStr, toStr) {
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return [];
+
+  const entries = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const rowDate = row[0];
+
+    let rowDateStr = '';
+    if (rowDate instanceof Date) {
+      rowDateStr = Utilities.formatDate(rowDate, 'Asia/Kolkata', 'yyyy-MM-dd');
+    } else if (typeof rowDate === 'string') {
+      if (rowDate.includes('/')) {
+        const parts = rowDate.split('/');
+        if (parts.length === 3) {
+          rowDateStr = parts[2] + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0');
+        }
+      } else {
+        rowDateStr = rowDate.substring(0, 10);
+      }
+    }
+
+    if (rowDateStr >= fromStr && rowDateStr <= toStr) {
+      entries.push({
+        date: rowDate,
+        shop: normalizeShop(String(row[1] || '')),
+        type: String(row[2] || '').toLowerCase(),
+        qty: parseFloat(row[3]) || 0,
+        price: parseFloat(row[4]) || 0
+      });
+    }
+  }
+  return entries;
+}
+
+/**
+ * Build a weekly summary message with per-shop, per-spice totals and P&L
+ */
+function buildWeeklyMessage(fromDisplay, toDisplay, purchases, sales) {
+  let msg = '📊 *KVS Spices — Weekly Report*\n';
+  msg += '📅 ' + fromDisplay + ' – ' + toDisplay + '\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━\n\n';
+
+  let grandBuyQty = 0, grandBuyVal = 0, grandSellQty = 0, grandSellVal = 0;
+
+  // ── PER-SHOP BREAKDOWN ──
+  for (const shop of CONFIG.SHOPS) {
+    const shopBuys  = purchases.filter(e => e.shop === shop);
+    const shopSales = sales.filter(e => e.shop === shop);
+    if (shopBuys.length === 0 && shopSales.length === 0) continue;
+
+    msg += '🏪 *' + shop + '*\n';
+
+    // Group by spice
+    const spiceData = {};
+    shopBuys.forEach(e => {
+      if (!spiceData[e.type]) spiceData[e.type] = { buyQty: 0, buyVal: 0, sellQty: 0, sellVal: 0 };
+      spiceData[e.type].buyQty += e.qty;
+      spiceData[e.type].buyVal += e.qty * e.price;
+    });
+    shopSales.forEach(e => {
+      if (!spiceData[e.type]) spiceData[e.type] = { buyQty: 0, buyVal: 0, sellQty: 0, sellVal: 0 };
+      spiceData[e.type].sellQty += e.qty;
+      spiceData[e.type].sellVal += e.qty * e.price;
+    });
+
+    for (const [type, d] of Object.entries(spiceData)) {
+      const label = CONFIG.SPICE_LABELS[type] || type;
+      let line = '  • ' + label + ': ';
+      const parts = [];
+      if (d.buyQty > 0) {
+        const avg = Math.round(d.buyVal / d.buyQty);
+        parts.push('↓' + d.buyQty.toFixed(1) + 'kg @₹' + avg);
+        grandBuyQty += d.buyQty;
+        grandBuyVal += d.buyVal;
+      }
+      if (d.sellQty > 0) {
+        const avg = Math.round(d.sellVal / d.sellQty);
+        parts.push('↑' + d.sellQty.toFixed(1) + 'kg @₹' + avg);
+        grandSellQty += d.sellQty;
+        grandSellVal += d.sellVal;
+      }
+      msg += line + parts.join(' | ') + '\n';
+    }
+    msg += '\n';
+  }
+
+  // ── OVERALL TOTALS ──
+  msg += '━━━━━━━━━━━━━━━━━━━━\n';
+  msg += '📦 *WEEKLY TOTALS*\n';
+  if (grandBuyQty > 0) {
+    msg += '  Purchased: ' + grandBuyQty.toFixed(1) + ' kg — ₹' + Math.round(grandBuyVal).toLocaleString('en-IN') + '\n';
+    msg += '  Avg Buy: ₹' + Math.round(grandBuyVal / grandBuyQty) + '/kg\n';
+  }
+  if (grandSellQty > 0) {
+    msg += '  Sold: ' + grandSellQty.toFixed(1) + ' kg — ₹' + Math.round(grandSellVal).toLocaleString('en-IN') + '\n';
+    msg += '  Avg Sell: ₹' + Math.round(grandSellVal / grandSellQty) + '/kg\n';
+  }
+  if (grandSellQty > 0 && grandBuyQty > 0) {
+    const costBasis = (grandBuyVal / grandBuyQty) * grandSellQty;
+    const pnl = grandSellVal - costBasis;
+    msg += '  ' + (pnl >= 0 ? '📈 Profit' : '📉 Loss') + ': ₹' + Math.abs(Math.round(pnl)).toLocaleString('en-IN') + '\n';
+  }
+
+  msg += '\n━━━━━━━━━━━━━━━━━━━━\n';
+  msg += '🤖 _Auto-sent by KVS Spices (Weekly)_';
+
+  return msg;
+}
+
+// ═══════════════════════════════════════════════════════════
 // READ TODAY'S ENTRIES
 // ═══════════════════════════════════════════════════════════
 function getTodayEntries(sheet, dateStr) {
