@@ -412,14 +412,6 @@ function App() {
         // Persist to Sheets
         postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart })
           .catch(err => console.error("Error saving load reset:", err));
-        // Add DISPATCHED marker row in Sheet1
-        const markerDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-        postToSheet({
-          kind: 'dispatch_marker',
-          shop: selectedShop,
-          type: spiceId,
-          marker: `--- LOAD DISPATCHED: ${spiceLabel} @ ${selectedShop} — ${markerDate} ---`
-        }).catch(err => console.error("Error writing dispatch marker:", err));
       }
       return;
     }
@@ -464,18 +456,9 @@ function App() {
 
     // Defer network sync so React paints the navigation first
     setTimeout(() => {
-      const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
-      const markerDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
       Promise.all([
         postToSheet(dispatchSale),
         postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
-        // Add DISPATCHED marker row in Sheet1
-        postToSheet({
-          kind: 'dispatch_marker',
-          shop: selectedShop,
-          type: spiceId,
-          marker: `--- LOAD DISPATCHED: ${spiceLabel} @ ${selectedShop} — ${markerDate} ---`
-        }),
       ])
         .then(() => refreshFromSheets(true))
         .catch(err => console.error("Error syncing dispatch to Sheets:", err));

@@ -345,18 +345,30 @@ function buildSummaryMessage(displayDate, purchases, sales) {
 
 // ═══════════════════════════════════════════════════════════
 // SEND WHATSAPP MESSAGE VIA CLOUD API
+//
+// Uses the "daily_spice_summary" template with a {{1}} body
+// parameter so the full summary is delivered inside the
+// template itself — no 24-hour window needed.
+//
+// ── HOW TO CREATE THE TEMPLATE (one-time setup) ──
+// 1. Go to https://business.facebook.com → your WhatsApp account
+// 2. Menu → Message Templates → Create Template
+// 3. Category: UTILITY,  Name: daily_spice_summary
+// 4. Language: English (en)
+// 5. Body text:  {{1}}     (just the variable, nothing else)
+// 6. Submit & wait for approval (usually instant for utility)
 // ═══════════════════════════════════════════════════════════
 function sendWhatsAppMessage(text) {
   const url = 'https://graph.facebook.com/v22.0/' + CONFIG.PHONE_NUMBER_ID + '/messages';
-  
-  // Try sending the text message directly first
+
+  // ── Try 1: Send as a plain text message (works inside 24h window) ──
   const textPayload = {
     messaging_product: 'whatsapp',
     to: CONFIG.RECIPIENT,
     type: 'text',
     text: { body: text }
   };
-  
+
   const textRes = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
@@ -364,29 +376,41 @@ function sendWhatsAppMessage(text) {
     payload: JSON.stringify(textPayload),
     muteHttpExceptions: true
   });
-  
+
   const textResult = JSON.parse(textRes.getContentText());
   Logger.log('Text message response: ' + textRes.getContentText());
-  
-  // If text message succeeded, we're done
+
   if (textResult.messages && textResult.messages[0]) {
     Logger.log('✅ Text message sent: ' + textResult.messages[0].id);
     return textResult;
   }
-  
-  // If text failed (outside 24h window), send template first then retry
-  Logger.log('⚠️ Text failed, trying template first: ' + JSON.stringify(textResult.error));
-  
+
+  // ── Try 2: Outside 24h window — use custom template with summary ──
+  Logger.log('⚠️ Text failed, sending via template: ' + JSON.stringify(textResult.error));
+
+  // Truncate to 1024 chars (WhatsApp template parameter limit)
+  const truncated = text.length > 1024
+    ? text.substring(0, 1020) + '...'
+    : text;
+
   const templatePayload = {
     messaging_product: 'whatsapp',
     to: CONFIG.RECIPIENT,
     type: 'template',
     template: {
-      name: 'hello_world',
-      language: { code: 'en_US' }
+      name: 'daily_spice_summary',
+      language: { code: 'en' },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: truncated }
+          ]
+        }
+      ]
     }
   };
-  
+
   const templateRes = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
@@ -394,30 +418,102 @@ function sendWhatsAppMessage(text) {
     payload: JSON.stringify(templatePayload),
     muteHttpExceptions: true
   });
-  
+
+  const templateResult = JSON.parse(templateRes.getContentText());
   Logger.log('Template response: ' + templateRes.getContentText());
-  
-  // Wait for template to open conversation, then retry text
-  Utilities.sleep(3000);
-  
-  const retryRes = UrlFetchApp.fetch(url, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'Authorization': 'Bearer ' + CONFIG.ACCESS_TOKEN },
-    payload: JSON.stringify(textPayload),
-    muteHttpExceptions: true
-  });
-  
-  const retryResult = JSON.parse(retryRes.getContentText());
-  Logger.log('Retry text response: ' + retryRes.getContentText());
-  
-  if (retryResult.error) {
-    Logger.log('❌ WhatsApp send failed after retry: ' + JSON.stringify(retryResult.error));
-    throw new Error('WhatsApp send failed: ' + retryResult.error.message);
+
+  if (templateResult.messages && templateResult.messages[0]) {
+    Logger.log('✅ Template message sent: ' + templateResult.messages[0].id);
+    return templateResult;
   }
-  
-  Logger.log('✅ Message sent on retry: ' + retryResult.messages[0].id);
-  return retryResult;
+
+  Logger.log('❌ Both text and template failed: ' + JSON.stringify(templateResult.error));
+  throw new Error('WhatsApp send failed: ' + (templateResult.error ? templateResult.error.message : 'Unknown error'));
+}
+
+// ═══════════════════════════════════════════════════════════
+// INSTANT PURCHASE ALERT — sends WhatsApp when a new row
+// is added to Sheet1 (purchases) or Sales sheet.
+//
+// SET UP (one-time):
+//   Triggers (clock icon) → Add Trigger:
+//   - Function: onNewEntry
+//   - Event source: From spreadsheet
+//   - Event type: On change
+//   - Select spreadsheet: (your sheet)
+// ═══════════════════════════════════════════════════════════
+function onNewEntry(e) {
+  // Only fire on row inserts / edits
+  if (e && e.changeType && e.changeType !== 'INSERT_ROW' && e.changeType !== 'EDIT') return;
+
+  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return; // prevent duplicate sends
+
+  try {
+    // Check purchases sheet
+    const purchaseSheet = ss.getSheetByName('Sheet1');
+    _checkAndAlert(purchaseSheet, 'purchase');
+
+    // Check sales sheet
+    const salesSheet = ss.getSheetByName('Sales');
+    _checkAndAlert(salesSheet, 'sale');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Reads the last row of a sheet. If it was added in the last 60 seconds,
+ * send an instant WhatsApp alert for that entry.
+ */
+function _checkAndAlert(sheet, kind) {
+  if (!sheet) return;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const row = sheet.getRange(lastRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const rowDate = row[0];
+
+  // Only alert if the row was just added (within 60s)
+  let rowTime;
+  if (rowDate instanceof Date) {
+    rowTime = rowDate.getTime();
+  } else {
+    // Try parsing the date string
+    rowTime = new Date(rowDate).getTime();
+  }
+
+  const now = Date.now();
+  if (isNaN(rowTime) || (now - rowTime) > 120000) return; // older than 2 min → skip
+
+  const shop  = normalizeShop(String(row[1] || ''));
+  const type  = String(row[2] || '').toLowerCase();
+  const qty   = parseFloat(row[3]) || 0;
+  const price = parseFloat(row[4]) || 0;
+  const value = Math.round(qty * price);
+  const label = CONFIG.SPICE_LABELS[type] || type;
+  const time  = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'hh:mm a');
+
+  const emoji = kind === 'purchase' ? '🟢' : '🔴';
+  const verb  = kind === 'purchase' ? 'PURCHASED' : 'SOLD';
+
+  let msg = emoji + ' *New ' + (kind === 'purchase' ? 'Purchase' : 'Sale') + '*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━\n';
+  msg += '🏪 ' + shop + '\n';
+  msg += '🌿 ' + label + '\n';
+  msg += '⚖️ ' + qty.toFixed(1) + ' kg @ ₹' + price + '/kg\n';
+  msg += '💰 Total: ₹' + value.toLocaleString('en-IN') + '\n';
+  msg += '🕐 ' + time + '\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━\n';
+  msg += '🤖 _KVS Spices — Instant Alert_';
+
+  try {
+    sendWhatsAppMessage(msg);
+    Logger.log('✅ Instant ' + kind + ' alert sent: ' + shop + ' / ' + label + ' / ' + qty + 'kg');
+  } catch (err) {
+    Logger.log('⚠️ Instant alert failed (non-critical): ' + err.message);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
