@@ -349,8 +349,34 @@ function buildSummaryMessage(displayDate, purchases, sales) {
 function sendWhatsAppMessage(text) {
   const url = 'https://graph.facebook.com/v22.0/' + CONFIG.PHONE_NUMBER_ID + '/messages';
   
-  // First, send the hello_world template to open the conversation
-  // (required for business-initiated messages outside 24h window)
+  // Try sending the text message directly first
+  const textPayload = {
+    messaging_product: 'whatsapp',
+    to: CONFIG.RECIPIENT,
+    type: 'text',
+    text: { body: text }
+  };
+  
+  const textRes = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'Authorization': 'Bearer ' + CONFIG.ACCESS_TOKEN },
+    payload: JSON.stringify(textPayload),
+    muteHttpExceptions: true
+  });
+  
+  const textResult = JSON.parse(textRes.getContentText());
+  Logger.log('Text message response: ' + textRes.getContentText());
+  
+  // If text message succeeded, we're done
+  if (textResult.messages && textResult.messages[0]) {
+    Logger.log('✅ Text message sent: ' + textResult.messages[0].id);
+    return textResult;
+  }
+  
+  // If text failed (outside 24h window), send template first then retry
+  Logger.log('⚠️ Text failed, trying template first: ' + JSON.stringify(textResult.error));
+  
   const templatePayload = {
     messaging_product: 'whatsapp',
     to: CONFIG.RECIPIENT,
@@ -371,17 +397,10 @@ function sendWhatsAppMessage(text) {
   
   Logger.log('Template response: ' + templateRes.getContentText());
   
-  // Wait a moment, then send the actual summary as a text message
-  Utilities.sleep(2000);
+  // Wait for template to open conversation, then retry text
+  Utilities.sleep(3000);
   
-  const textPayload = {
-    messaging_product: 'whatsapp',
-    to: CONFIG.RECIPIENT,
-    type: 'text',
-    text: { body: text }
-  };
-  
-  const textRes = UrlFetchApp.fetch(url, {
+  const retryRes = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
     headers: { 'Authorization': 'Bearer ' + CONFIG.ACCESS_TOKEN },
@@ -389,15 +408,52 @@ function sendWhatsAppMessage(text) {
     muteHttpExceptions: true
   });
   
-  const result = JSON.parse(textRes.getContentText());
+  const retryResult = JSON.parse(retryRes.getContentText());
+  Logger.log('Retry text response: ' + retryRes.getContentText());
   
-  if (result.error) {
-    Logger.log('❌ WhatsApp send failed: ' + JSON.stringify(result.error));
-    throw new Error('WhatsApp send failed: ' + result.error.message);
+  if (retryResult.error) {
+    Logger.log('❌ WhatsApp send failed after retry: ' + JSON.stringify(retryResult.error));
+    throw new Error('WhatsApp send failed: ' + retryResult.error.message);
   }
   
-  Logger.log('✅ Message sent: ' + result.messages[0].id);
-  return result;
+  Logger.log('✅ Message sent on retry: ' + retryResult.messages[0].id);
+  return retryResult;
+}
+
+// ═══════════════════════════════════════════════════════════
+// DIAGNOSTIC — run this to check what error the API returns
+// ═══════════════════════════════════════════════════════════
+function diagnoseSend() {
+  const url = 'https://graph.facebook.com/v22.0/' + CONFIG.PHONE_NUMBER_ID + '/messages';
+  
+  // Try a plain text message (no template)
+  const textPayload = {
+    messaging_product: 'whatsapp',
+    to: CONFIG.RECIPIENT,
+    type: 'text',
+    text: { body: '🧪 Diagnostic test from KVS Spices' }
+  };
+  
+  const res = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'Authorization': 'Bearer ' + CONFIG.ACCESS_TOKEN },
+    payload: JSON.stringify(textPayload),
+    muteHttpExceptions: true
+  });
+  
+  Logger.log('HTTP Status: ' + res.getResponseCode());
+  Logger.log('Response: ' + res.getContentText());
+  
+  const body = JSON.parse(res.getContentText());
+  if (body.error) {
+    Logger.log('ERROR CODE: ' + body.error.code);
+    Logger.log('ERROR TYPE: ' + body.error.type);
+    Logger.log('ERROR MSG: ' + body.error.message);
+    Logger.log('ERROR SUBCODE: ' + (body.error.error_subcode || 'none'));
+  } else {
+    Logger.log('SUCCESS — Message ID: ' + body.messages[0].id);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
