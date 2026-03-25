@@ -50,7 +50,8 @@ export function AuthProvider({ children }) {
       if (allUsers.length === 0) {
         return {
           ok: false,
-          error: 'No users in Firestore. Run: node scripts/setup.mjs (from project folder).',
+          error:
+            'No users in this database. On your computer run: npm run seed — then try again. Also check Firebase Console → Firestore → Data has a "users" collection.',
         };
       }
 
