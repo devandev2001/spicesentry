@@ -4,6 +4,23 @@ import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'd
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+// ── Toast Notification System ──
+let _toastId = 0;
+function ToastContainer({ toasts, onDismiss }) {
+  if (!toasts.length) return null;
+  const icons = { success: '✓', error: '✕', info: '●', warning: '⚠' };
+  return (
+    <div className="toast-container">
+      {toasts.map(t => (
+        <div key={t.id} className={`toast ${t.type}`} onClick={() => onDismiss(t.id)} style={{ cursor: 'pointer' }}>
+          <span className="toast-icon">{icons[t.type] || '●'}</span>
+          <span className="toast-msg">{t.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Indian Currency Formatter ──
 // Formats numbers as ₹1,25,000 (Indian lakh/crore system)
 const formatINR = (num) => {
@@ -97,6 +114,15 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  // ── Toast system ──
+  const [toasts, setToasts] = useState([]);
+  const showToast = (message, type = 'info', duration = 3000) => {
+    const id = ++_toastId;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration);
+  };
+  const dismissToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
   // Custom confirm modal (replaces native confirm() for beautiful UI)
   const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm }
@@ -654,8 +680,8 @@ function App() {
             shopLoads={shopLoads}
           />
         )}
-        {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} />}
-        {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} />}
+        {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} showToast={showToast} />}
+        {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} showToast={showToast} />}
         {activeTab === 'daily' && (
           <DailyPurchases
             entries={entries}
@@ -709,6 +735,9 @@ function App() {
           <span>History</span>
         </button>
       </nav>
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Dispatch Price Modal */}
       {dispatchModal && (
@@ -1075,251 +1104,189 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
     URL.revokeObjectURL(url);
   };
 
+  // Compute hero totals
+  const totalInventoryValue = stats.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
+  const totalPnL = stats.reduce((s, sp) => {
+    if (sp.profitPerKg !== null && sp.soldQty > 0) return s + sp.profitPerKg * sp.soldQty;
+    return s;
+  }, 0);
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
-      <div className="header-row">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <img src="/kvs-logo.png" alt="KVS" style={{ width: 72, height: 72, borderRadius: 14, objectFit: 'contain' }} />
+      {/* ── Sticky App Header ── */}
+      <header className="app-header">
+        <div className="app-header-brand">
+          <img src="/kvs-logo.png" alt="KVS" />
           <div>
-            <h1 className="title">KVS Spices</h1>
-            <p className="subtitle" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              {format(now, 'dd MMM yyyy, hh:mm:ss a')}
-              {syncing && <span style={{ fontSize: '0.6rem', color: 'var(--primary-accent)', marginLeft: 4 }}>⟳ syncing…</span>}
-            </p>
+            <h1 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>KVS Spices</h1>
+            <p style={{ fontSize: '0.58rem', color: 'var(--text-secondary)', fontWeight: 600, margin: 0 }}>{format(now, 'dd MMM yyyy, hh:mm a')}</p>
           </div>
         </div>
-        {/* Refresh + Backup buttons */}
-        <div style={{ display: 'flex', gap: '0.4rem' }}>
-          <button
-            onClick={downloadBackup}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 36, height: 36,
-              background: 'rgba(76,175,80,0.12)',
-              border: '1px solid rgba(76,175,80,0.3)',
-              borderRadius: 12,
-              color: '#4caf50',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-            }}
-            title="Download backup (CSV)"
-          >
-            <HardDriveDownload size={18} />
+        <div className="app-header-actions">
+          <div className="pulse-dot" style={{ marginRight: 4 }} />
+          <button className="icon-btn green" onClick={downloadBackup} title="Download backup (CSV)">
+            <HardDriveDownload size={16} />
           </button>
           <button
+            className="icon-btn blue"
             onClick={onRefresh}
             disabled={syncing}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 36, height: 36,
-              background: syncing ? 'rgba(88,166,255,0.2)' : 'rgba(88,166,255,0.12)',
-              border: '1px solid rgba(88,166,255,0.3)',
-              borderRadius: 12,
-              color: '#58a6ff',
-              cursor: syncing ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s ease',
-              animation: syncing ? 'spin 1s linear infinite' : 'none',
-            }}
-            title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh from Google Sheets'}
+            title={lastSync ? `Last synced: ${format(lastSync, 'h:mm:ss a')}` : 'Refresh'}
+            style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
             </svg>
           </button>
         </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
+      </header>
 
-      {/* ── Action buttons — full-width row for mobile ── */}
-      <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem' }}>
-        <button
-          onClick={onTransfer}
-          style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-            padding: '0.7rem 1rem',
-            background: 'rgba(16,185,129,0.1)',
-            border: '1px solid rgba(16,185,129,0.3)',
-            borderRadius: 12,
-            color: '#10b981',
-            fontSize: '0.85rem', fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-          }}
-        >
-          <ArrowRightLeft size={18} />
-          Transfer Stock
-        </button>
-        <button
-          onClick={() => setShowOverallAvg(v => !v)}
-          style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-            padding: '0.7rem 1rem',
-            background: showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.1)',
-            border: `1px solid ${showOverallAvg ? 'var(--primary-accent)' : 'rgba(59,130,246,0.3)'}`,
-            borderRadius: 12,
-            color: showOverallAvg ? '#fff' : 'var(--primary-accent)',
-            fontSize: '0.85rem', fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-          }}
-        >
-          <TrendingUp size={18} />
-          Overall Avg
-        </button>
-      </div>
-
-      {/* ── Combined Average (All 3 Branches) — toggleable ── */}
-      {showOverallAvg && (
-        <div style={{ animation: 'fadeIn 0.2s ease-in-out', marginBottom: '1.5rem' }}>
-          <div className="stat-grid">
-            {allBranchStats.map(spice => (
-              <div key={spice.id} className="glass-card" style={{
-                padding: '0.85rem',
-                borderTop: `3px solid ${spice.color}`,
-                background: `linear-gradient(180deg, ${spice.color}11 0%, transparent 60%)`,
-              }}>
-                <p className="subtitle" style={{ fontSize: '0.7rem' }}>{spice.label}</p>
-                <div className="stat-value" style={{ fontSize: '1.3rem', fontWeight: 700, color: spice.color }}>
-                  {formatINR(spice.avgPrice)} <span className="stat-unit" style={{ fontSize: '0.6rem' }}>/Kg</span>
-                </div>
-                <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0.35rem 0 0.3rem' }}>
-                  {spice.totalQty.toFixed(2)} Kg total
-                </p>
-                <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                  {spice.perShop.map(ps => (
-                    <div key={ps.shop} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '65%' }}>{ps.shop}</span>
-                      <span style={{ fontSize: '0.65rem', fontWeight: 600, color: ps.qty > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                        {ps.qty > 0 ? `${ps.qty.toFixed(2)} Kg` : '—'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className="page-section" style={{ paddingTop: '1rem' }}>
+        {/* ── Shop Selector ── */}
+        <div className="shop-selector" style={{ marginBottom: '1rem' }}>
+          {shops.map(shop => (
+            <div
+              key={shop}
+              className={`shop-tab ${selectedShop === shop ? 'active' : ''}`}
+              onClick={() => onSelectShop(shop)}
+            >
+              {shop}
+            </div>
+          ))}
         </div>
-      )}
-      <div className="shop-selector">
-        {shops.map(shop => (
-          <div 
-            key={shop}
-            className={`shop-tab ${selectedShop === shop ? 'active' : ''}`}
-            onClick={() => onSelectShop(shop)}
-          >
-            {shop}
-          </div>
-        ))}
-      </div>
 
-      <h2 className="title" style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <TrendingUp size={18} /> Average Prices
-      </h2>
-      <div className="stat-grid">
-        {stats.map(spice => (
-          <div key={spice.id} className="glass-card" style={{ borderLeft: `4px solid ${spice.color}`, padding: '0.75rem' }}>
-            <p className="subtitle" style={{ fontSize: '0.7rem' }}>{spice.label}</p>
-
-            {/* Buy avg (cost-relief adjusted) */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.4rem' }}>
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Buy Avg</span>
-              <span style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color }}>
-                {formatINR(spice.avgBuyPrice)} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
-              </span>
-            </div>
-
-            {/* Sell avg — only shown when there are sales */}
-            {spice.avgSellPrice !== null && (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.25rem' }}>
-                  <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Sell Avg</span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#10b981' }}>
-                    {formatINR(spice.avgSellPrice)} <span style={{ fontSize: '0.55rem', fontWeight: 400 }}>/Kg</span>
-                  </span>
-                </div>
-
-                {/* Profit / Loss per kg */}
-                <div style={{
-                  marginTop: '0.4rem',
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 8,
-                  background: spice.profitPerKg >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                }}>
-                  <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>
-                    {spice.profitPerKg >= 0 ? '▲ Profit' : '▼ Loss'}/Kg
-                  </span>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: spice.profitPerKg >= 0 ? '#10b981' : 'var(--danger)' }}>
-                    {formatINR(Math.abs(spice.profitPerKg))}
-                  </span>
-                </div>
-              </>
-            )}
-
-            {/* Remaining stock value */}
-            {spice.remainingQty > 0 && spice.totalBuyValue > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>Stock Value</span>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {formatINR(spice.remainingValue)}
-                </span>
+        {/* ── Hero Summary Card ── */}
+        <div className="hero-card" style={{ marginBottom: '1rem' }}>
+          <p style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--amber)', textTransform: 'uppercase', letterSpacing: '0.22em', marginBottom: '0.5rem' }}>
+            Total Inventory Value
+          </p>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '2.2rem', fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.04em', lineHeight: 1, fontFamily: "'DM Mono', monospace" }}>
+              {formatINR(totalInventoryValue)}
+            </span>
+            {totalPnL !== 0 && (
+              <div className={`pnl-badge ${totalPnL >= 0 ? 'positive' : 'negative'}`}>
+                {totalPnL >= 0 ? '↑' : '↓'} {formatINR(Math.abs(totalPnL))}
               </div>
             )}
           </div>
-        ))}
-      </div>
+          <p style={{ fontSize: '0.65rem', color: 'var(--text-2)', marginTop: '0.6rem', fontWeight: 500 }}>
+            {selectedShop} · {format(now, 'dd MMM, hh:mm a')}
+          </p>
+        </div>
 
-      <h2 className="title" style={{ fontSize: '1.1rem', margin: '1.5rem 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Filter size={18} /> Stock
-      </h2>
-      <div className="stat-grid">
-        {stats.map(spice => (
-          <div key={spice.id} className="glass-card" style={{ padding: '0.75rem' }}>
-            <p className="subtitle" style={{ fontSize: '0.7rem' }}>{spice.label}</p>
-            <div className="stat-value" style={{ fontSize: '1.2rem', color: spice.remainingQty > 0 ? 'var(--text-primary)' : 'var(--text-secondary)'}}>
-              {spice.remainingQty.toFixed(2)} <span className="stat-unit" style={{ fontSize: '0.6rem' }}>Kg left</span>
+        {/* ── Action Buttons ── */}
+        <div className="action-row" style={{ marginBottom: '1rem' }}>
+          <button className="action-btn-outline" onClick={onTransfer}>
+            <ArrowRightLeft size={15} />
+            Transfer
+          </button>
+          <button
+            className={`action-btn-outline blue ${showOverallAvg ? 'active' : ''}`}
+            onClick={() => setShowOverallAvg(v => !v)}
+          >
+            <TrendingUp size={15} />
+            All Branches
+          </button>
+        </div>
+
+        {/* ── Overall Avg (All Branches) ── */}
+        {showOverallAvg && (
+          <div style={{ animation: 'fadeIn 0.2s ease', marginBottom: '1rem' }}>
+            <p className="section-header muted" style={{ marginBottom: '0.6rem' }}>All-Branch Average Prices</p>
+            <div className="stat-grid">
+              {allBranchStats.map(spice => (
+                <div key={spice.id} className="glass-card" style={{
+                  padding: '0.85rem',
+                  borderTop: `3px solid ${spice.color}`,
+                  background: 'var(--bg-card)',
+                }}>
+                  <p style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-2)', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{spice.label}</p>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color, letterSpacing: '-0.02em', fontFamily: "'DM Mono', monospace" }}>
+                    {formatINR(spice.avgPrice)} <span style={{ fontSize: '0.6rem', fontWeight: 400, opacity: 0.6 }}>/Kg</span>
+                  </div>
+                  <p style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-1)', margin: '0.35rem 0 0.3rem', fontFamily: "'DM Mono', monospace" }}>
+                    {spice.totalQty.toFixed(2)} kg
+                  </p>
+                  <div style={{ borderTop: '1px solid var(--rim-muted)', paddingTop: '0.3rem', display: 'flex', flexDirection: 'column', gap: '0.18rem' }}>
+                    {spice.perShop.map(ps => (
+                      <div key={ps.shop} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '60%' }}>{ps.shop}</span>
+                        <span style={{ fontSize: '0.65rem', fontWeight: 600, color: ps.qty > 0 ? 'var(--text-1)' : 'var(--text-3)', fontFamily: "'DM Mono', monospace" }}>
+                          {ps.qty > 0 ? `${ps.qty.toFixed(2)} kg` : '—'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
-            {spice.soldQty > 0 && (
-              <p style={{ fontSize: '0.62rem', color: 'var(--danger)', marginTop: '0.2rem' }}>
-                sold {spice.soldQty.toFixed(2)} Kg
-              </p>
-            )}
-            {spice.totalQty > 0 && (
-              <button
-                onClick={() => onDispatch(spice.id)}
-                style={{
-                  marginTop: '0.5rem',
-                  width: '100%',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
-                  padding: '0.35rem 0.5rem',
-                  borderRadius: 8,
-                  border: '1px solid rgba(248,113,113,0.3)',
-                  background: 'rgba(248,113,113,0.08)',
-                  color: 'var(--danger)',
-                  fontSize: '0.65rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                <Truck size={12} />
-                Dispatch
-              </button>
-            )}
           </div>
-        ))}
+        )}
+
+        {/* ── Spice Cards ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {stats.map(spice => (
+            <div key={spice.id} className="spice-card">
+              <div className="spice-card-accent" style={{ background: spice.color }} />
+              <div className="spice-card-body">
+                <div className="spice-card-header">
+                  <div className="spice-card-title">
+                    <div className="spice-dot" style={{ background: spice.color }} />
+                    {spice.label}
+                  </div>
+                  {spice.avgSellPrice !== null && (
+                    <div className={`pnl-badge ${spice.profitPerKg >= 0 ? 'positive' : 'negative'}`} style={{ fontSize: '0.62rem', padding: '0.15rem 0.55rem' }}>
+                      {spice.profitPerKg >= 0 ? '▲' : '▼'} {formatINR(Math.abs(spice.profitPerKg))}/Kg
+                    </div>
+                  )}
+                </div>
+
+                <div className="spice-stats-grid">
+                  <div className="spice-stat-item">
+                    <span className="spice-stat-label">Bought</span>
+                    <span className="spice-stat-value">{spice.totalQty.toFixed(2)} <span className="unit">kg</span></span>
+                  </div>
+                  <div className="spice-stat-item">
+                    <span className="spice-stat-label">Sold</span>
+                    <span className="spice-stat-value">{spice.soldQty.toFixed(2)} <span className="unit">kg</span></span>
+                  </div>
+                  <div className="spice-stat-item">
+                    <span className="spice-stat-label">Rem.</span>
+                    <span className="spice-stat-value accent">{spice.remainingQty.toFixed(2)} <span className="unit">kg</span></span>
+                  </div>
+                </div>
+
+                <div className="spice-card-footer">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                    <span className="spice-avg-price">Buy: {formatINR(spice.avgBuyPrice)}/kg</span>
+                    {spice.avgSellPrice !== null && (
+                      <span className="spice-avg-price" style={{ color: 'var(--primary-ctn)' }}>Sell: {formatINR(spice.avgSellPrice)}/kg</span>
+                    )}
+                  </div>
+                  {spice.totalQty > 0 && (
+                    <button className="dispatch-btn" onClick={() => onDispatch(spice.id)}>
+                      Dispatch
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-function AddEntry({ onAdd, shops, spices }) {
+function AddEntry({ onAdd, shops, spices, showToast }) {
   const [shop, setShop] = useState(shops[0]);
   const [type, setType] = useState(spices[0].id);
   const [qty, setQty] = useState('');
   const [price, setPrice] = useState('');
   const [listening, setListening] = useState(false);
   const [voiceText, setVoiceText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const recognitionRef = useRef(null);
 
   // ── Voice Entry via Web Speech API ──
@@ -1330,7 +1297,7 @@ function AddEntry({ onAdd, shops, spices }) {
       return;
     }
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return alert('Voice input not supported in this browser.');
+    if (!SpeechRecognition) { showToast('Voice input not supported in this browser.', 'warning'); return; }
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-IN';
     recognition.interimResults = false;
@@ -1366,124 +1333,134 @@ function AddEntry({ onAdd, shops, spices }) {
     if (nums && nums.length >= 2) setPrice(nums[1]);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!qty || !price) return alert('Please enter quantity and price.');
-    onAdd({
-      shop,
-      type,
-      qty: parseFloat(qty),
-      price: parseFloat(price),
-      date: new Date().toISOString()
-    });
+    if (!qty || !price) { showToast('Please enter quantity and price.', 'error'); return; }
+    setSubmitting(true);
+    try {
+      await onAdd({ shop, type, qty: parseFloat(qty), price: parseFloat(price), date: new Date().toISOString() });
+      showToast(`Purchase recorded — ${parseFloat(qty)} kg added to ${shop}`, 'success');
+      setQty('');
+      setPrice('');
+      setVoiceText('');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const selectedSpice = spices.find(s => s.id === type);
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <div>
-          <h1 className="title">Add Purchase</h1>
-          <p className="subtitle">Select branch and enter details</p>
+      {/* Header */}
+      <header className="app-header">
+        <div className="app-header-brand">
+          <img src="/kvs-logo.png" alt="KVS" />
+          <h1 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>Record Purchase</h1>
         </div>
-        <button
-          onClick={toggleVoice}
-          style={{
-            width: 48, height: 48, borderRadius: '50%',
-            border: listening ? '2px solid #f87171' : '2px solid rgba(88,166,255,0.3)',
-            background: listening ? 'rgba(248,113,113,0.15)' : 'rgba(88,166,255,0.08)',
-            color: listening ? '#f87171' : '#58a6ff',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none',
-            flexShrink: 0,
-          }}
-        >
-          {listening ? <MicOff size={22} /> : <Mic size={22} />}
-        </button>
-      </div>
-      {voiceText && (
-        <div style={{
-          marginBottom: '1rem', padding: '0.5rem 0.75rem', borderRadius: 8,
-          background: 'rgba(88,166,255,0.08)', border: '1px solid rgba(88,166,255,0.2)',
-          fontSize: '0.75rem', color: '#58a6ff',
-        }}>
-          🎙️ "{voiceText}"
+        <div className="app-header-actions">
+          <button className={`mic-btn ${listening ? 'recording' : ''}`} type="button" onClick={toggleVoice}>
+            {listening ? <MicOff size={20} /> : <Mic size={20} />}
+          </button>
         </div>
-      )}
+      </header>
 
-      <div className="shop-selector">
-        {shops.map(s => (
-          <div 
-            key={s}
-            className={`shop-tab ${shop === s ? 'active' : ''}`}
-            onClick={() => setShop(s)}
-          >
-            {s}
+      <div className="page-section" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {voiceText && (
+          <div style={{ padding: '0.5rem 0.85rem', borderRadius: 10, background: 'var(--amber-glow)', border: '1px solid var(--amber-rim)', fontSize: '0.75rem', color: 'var(--amber-lt)', fontStyle: 'italic' }}>
+            🎙 &ldquo;{voiceText}&rdquo;
           </div>
-        ))}
-      </div>
+        )}
 
-      <div className="spice-scroll">
-        {spices.map(spice => (
-          <div 
-            key={spice.id}
-            className={`spice-tab ${type === spice.id ? 'active' : ''}`}
-            style={type === spice.id ? { background: spice.color } : {}}
-            onClick={() => setType(spice.id)}
-          >
-            {spice.label}
-          </div>
-        ))}
-      </div>
-
-      <form className="glass-card" onSubmit={handleSubmit}>
-        <div className="input-group">
-          <label className="input-label">Quantity (Kg)</label>
-          <input 
-            type="number" 
-            step="0.01" 
-            className="modern-input" 
-            placeholder="0.00"
-            value={qty}
-            onChange={e => setQty(e.target.value)}
-          />
-        </div>
-        
-        <div className="input-group">
-          <label className="input-label">Price per Kg (₹)</label>
-          <input 
-            type="number" 
-            step="0.01" 
-            className="modern-input" 
-            placeholder="0.00"
-            value={price}
-            onChange={e => setPrice(e.target.value)}
-          />
-        </div>
-
-        <div className="input-group" style={{ marginBottom: '2rem' }}>
-          <label className="input-label">Total Value</label>
-          <div className="stat-value" style={{ fontSize: '1.5rem', color: selectedSpice.color }}>
-            {qty && price ? formatINR(parseFloat(qty) * parseFloat(price)) : '₹0'}
+        {/* SELECT SHOP */}
+        <div className="form-section">
+          <label className="form-label">Select Shop</label>
+          <div className="pill-group">
+            {shops.map(s => (
+              <button key={s} type="button" className={`pill-btn ${shop === s ? 'active' : ''}`} onClick={() => setShop(s)}>
+                {s}
+              </button>
+            ))}
           </div>
         </div>
 
-        <button type="submit" className="btn btn-primary" style={{ background: selectedSpice.color }}>
-          <PlusCircle size={20} />
-          Save Entry
-        </button>
-      </form>
+        {/* SELECT SPICE */}
+        <div className="form-section">
+          <label className="form-label muted">Select Spice</label>
+          <div className="spice-pill-grid">
+            {spices.map(spice => (
+              <button
+                key={spice.id}
+                type="button"
+                className={`spice-pill-btn ${type === spice.id ? 'active' : ''}`}
+                onClick={() => setType(spice.id)}
+              >
+                <div className="spice-dot" style={{ background: spice.color, width: 10, height: 10 }} />
+                {spice.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* QUANTITY & PRICE */}
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="input-grid-2">
+            <div className="input-group">
+              <label className="form-label muted">Quantity</label>
+              <div className="input-field-wrap">
+                <input
+                  type="number" step="0.01" inputMode="decimal" className="input-field has-suffix"
+                  placeholder="0.00" value={qty} onChange={e => setQty(e.target.value)}
+                  autoFocus
+                />
+                <span className="input-suffix">kg</span>
+              </div>
+              <div className="quick-fill-row">
+                {[10, 25, 50, 100].map(v => (
+                  <button key={v} type="button" className="quick-chip" onClick={() => setQty(String(v))}>{v}</button>
+                ))}
+              </div>
+            </div>
+            <div className="input-group">
+              <label className="form-label muted">Price / kg</label>
+              <div className="input-field-wrap">
+                <span className="input-prefix">₹</span>
+                <input
+                  type="number" step="0.01" inputMode="decimal" className="input-field has-prefix"
+                  placeholder="0" value={price} onChange={e => setPrice(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="total-row">
+            <p className="total-label">Total Value</p>
+            <span className="total-value">
+              {qty && price ? formatINR(parseFloat(qty) * parseFloat(price)) : '₹ —'}
+            </span>
+          </div>
+
+          <div className="submit-row">
+            <button type="submit" className="submit-btn" disabled={submitting}>
+              {submitting
+                ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 0.8s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Saving…</>
+                : <><PlusCircle size={17} /> Record Purchase</>
+              }
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
 
-function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedShop }) {
+function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedShop, showToast }) {
   const [shop, setShop] = useState(selectedShop || shops[0]);
   const [type, setType] = useState(spices[0].id);
   const [qty, setQty] = useState('');
   const [sellPrice, setSellPrice] = useState('');
   const [buyerName, setBuyerName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const selectedSpice = spices.find(s => s.id === type);
 
@@ -1508,16 +1485,22 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
   const remainingValue = boughtValue - soldValue;
   const avgBuyPrice = availableQty > 0 ? +(remainingValue / availableQty).toFixed(2) : (boughtQty > 0 ? +(boughtValue / boughtQty).toFixed(2) : 0);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!qty || !sellPrice) return alert('Please enter quantity and sell price.');
+    if (!qty || !sellPrice) { showToast('Please enter quantity and sell price.', 'error'); return; }
     if (parseFloat(qty) > availableQty) {
-      if (!confirm(`⚠️ You only have ${availableQty.toFixed(2)} Kg in stock but selling ${parseFloat(qty).toFixed(2)} Kg.\n\nContinue anyway?`)) return;
+      if (!confirm(`⚠️ Only ${availableQty.toFixed(2)} Kg in stock. Sell ${parseFloat(qty).toFixed(2)} Kg anyway?`)) return;
     }
-    onSell({ shop, type, qty: parseFloat(qty), sellPrice: parseFloat(sellPrice), buyerName });
-    setQty('');
-    setSellPrice('');
-    setBuyerName('');
+    setSubmitting(true);
+    try {
+      await onSell({ shop, type, qty: parseFloat(qty), sellPrice: parseFloat(sellPrice), buyerName });
+      showToast(`Sale recorded — ${parseFloat(qty)} kg sold from ${shop}`, 'success');
+      setQty('');
+      setSellPrice('');
+      setBuyerName('');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const profit = qty && sellPrice && avgBuyPrice > 0
@@ -1531,121 +1514,143 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
-      <h1 className="title">Record Sale</h1>
-      <p className="subtitle" style={{ marginBottom: '1.5rem' }}>Select branch and enter sale details</p>
+      {/* Header */}
+      <header className="app-header">
+        <div className="app-header-brand">
+          <img src="/kvs-logo.png" alt="KVS" />
+          <h1 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>Record Sale</h1>
+        </div>
+      </header>
 
-      <div className="shop-selector">
-        {shops.map(s => (
-          <div key={s} className={`shop-tab ${shop === s ? 'active' : ''}`} onClick={() => setShop(s)}>
-            {s}
+      <div className="page-section" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* SELECT SHOP */}
+        <div className="form-section">
+          <label className="form-label">Select Shop</label>
+          <div className="pill-group">
+            {shops.map(s => (
+              <button key={s} type="button" className={`pill-btn ${shop === s ? 'active' : ''}`} onClick={() => setShop(s)}>
+                {s}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
 
-      <div className="spice-scroll">
-        {spices.map(spice => (
-          <div
-            key={spice.id}
-            className={`spice-tab ${type === spice.id ? 'active' : ''}`}
-            style={type === spice.id ? { background: spice.color } : {}}
-            onClick={() => setType(spice.id)}
-          >
-            {spice.label}
+        {/* SELECT SPICE */}
+        <div className="form-section">
+          <label className="form-label muted">Select Spice</label>
+          <div className="spice-pill-grid">
+            {spices.map(spice => (
+              <button
+                key={spice.id}
+                type="button"
+                className={`spice-pill-btn ${type === spice.id ? 'active' : ''}`}
+                onClick={() => setType(spice.id)}
+              >
+                <div className="spice-dot" style={{ background: spice.color, width: 10, height: 10 }} />
+                {spice.label}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
 
-      {/* Available stock indicator */}
-      <div className="glass-card" style={{ padding: '0.75rem 1rem', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span className="subtitle" style={{ fontSize: '0.8rem' }}>Available in {shop}</span>
-          <span style={{ fontWeight: 700, fontSize: '1rem', color: availableQty > 0 ? selectedSpice.color : 'var(--danger)' }}>
-            {availableQty.toFixed(2)} Kg
+        {/* AVAILABLE STOCK */}
+        <div className="stock-info-bar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <span style={{ flex: 1 }}>
+            <strong>{availableQty.toFixed(2)} kg</strong> available in {shop}
+            {availableQty > 0 && <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}> · avg {formatINR(avgBuyPrice)}/kg</span>}
           </span>
-        </div>
-        {availableQty > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.35rem', paddingTop: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <span className="subtitle" style={{ fontSize: '0.7rem' }}>Current Avg Buy</span>
-            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{formatINR(avgBuyPrice)}/Kg</span>
-          </div>
-        )}
-        {availableQty > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.2rem' }}>
-            <span className="subtitle" style={{ fontSize: '0.7rem' }}>Stock Value</span>
-            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{formatINR(remainingValue > 0 ? remainingValue : 0)}</span>
-          </div>
-        )}
-      </div>
-
-      <form className="glass-card" onSubmit={handleSubmit}>
-        <div className="input-group">
-          <label className="input-label">Buyer Name (optional)</label>
-          <input
-            type="text"
-            className="modern-input"
-            placeholder="e.g. Rajan"
-            value={buyerName}
-            onChange={e => setBuyerName(e.target.value)}
-          />
+          {availableQty > 0 && <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{formatINR(remainingValue > 0 ? remainingValue : 0)}</span>}
         </div>
 
-        <div className="input-group">
-          <label className="input-label">Quantity to Sell (Kg)</label>
-          <input
-            type="number"
-            step="0.01"
-            className="modern-input"
-            placeholder="0.00"
-            value={qty}
-            onChange={e => setQty(e.target.value)}
-          />
-        </div>
-
-        <div className="input-group">
-          <label className="input-label">Sell Price per Kg (₹)</label>
-          <input
-            type="number"
-            step="0.01"
-            className="modern-input"
-            placeholder="0.00"
-            value={sellPrice}
-            onChange={e => setSellPrice(e.target.value)}
-          />
-        </div>
-
-        <div className="input-group" style={{ marginBottom: '2rem' }}>
-          <label className="input-label">Sale Summary</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.25rem' }}>
-            <div className="stat-value" style={{ fontSize: '1.5rem', color: selectedSpice.color }}>
-              {qty && sellPrice ? formatINR(parseFloat(qty) * parseFloat(sellPrice)) : '₹0'}
-            </div>
-            {profit !== null && (
-              <span style={{ fontSize: '0.78rem', fontWeight: 600, color: parseFloat(profit) >= 0 ? '#10b981' : 'var(--danger)' }}>
-                {parseFloat(profit) >= 0 ? '▲' : '▼'} {formatINR(Math.abs(parseFloat(profit)))} {parseFloat(profit) >= 0 ? 'profit' : 'loss'} vs current avg
-              </span>
-            )}
-            {previewAvg !== null && qty && sellPrice && parseFloat(qty) > 0 && (
-              <div style={{ marginTop: '0.3rem', padding: '0.5rem 0.65rem', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>After sale: {previewQty.toFixed(2)} Kg left</span>
-                  <span style={{ fontWeight: 700, color: previewAvg < avgBuyPrice ? '#10b981' : previewAvg > avgBuyPrice ? 'var(--danger)' : 'var(--text-primary)' }}>
-                    Avg {formatINR(previewAvg)}/Kg
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginTop: '0.15rem' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Stock value</span>
-                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{formatINR(previewValue > 0 ? Math.round(previewValue) : 0)}</span>
-                </div>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {/* INPUTS */}
+          <div className="input-grid-2">
+            <div className="input-group">
+              <label className="form-label muted">Quantity</label>
+              <div className="input-field-wrap">
+                <input
+                  type="number" step="0.01" inputMode="decimal" className="input-field has-suffix"
+                  placeholder="0.00" value={qty} onChange={e => setQty(e.target.value)}
+                  autoFocus
+                />
+                <span className="input-suffix">kg</span>
               </div>
-            )}
+              <div className="quick-fill-row">
+                {[5, 10, 25, 50].map(v => (
+                  <button key={v} type="button" className="quick-chip"
+                    onClick={() => setQty(String(Math.min(v, availableQty || v)))}
+                  >{v}</button>
+                ))}
+                {availableQty > 0 && (
+                  <button type="button" className="quick-chip" onClick={() => setQty(availableQty.toFixed(2))}>All</button>
+                )}
+              </div>
+            </div>
+            <div className="input-group">
+              <label className="form-label muted">Sell Price / kg</label>
+              <div className="input-field-wrap">
+                <span className="input-prefix">₹</span>
+                <input
+                  type="number" step="0.01" inputMode="decimal" className="input-field has-prefix"
+                  placeholder="0" value={sellPrice} onChange={e => setSellPrice(e.target.value)}
+                />
+              </div>
+              {avgBuyPrice > 0 && (
+                <div className="quick-fill-row">
+                  <button type="button" className="quick-chip" onClick={() => setSellPrice(String(avgBuyPrice))}>
+                    Cost ₹{avgBuyPrice}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
 
-        <button type="submit" className="btn btn-primary" style={{ background: 'var(--danger)' }}>
-          <ShoppingBag size={20} />
-          Confirm Sale
-        </button>
-      </form>
+          {/* BUYER NAME */}
+          <div className="input-group">
+            <label className="form-label muted">Buyer Name (optional)</label>
+            <input
+              type="text" className="input-field"
+              placeholder="e.g. Rajan" value={buyerName} onChange={e => setBuyerName(e.target.value)}
+              style={{ borderRadius: 12 }}
+            />
+          </div>
+
+          {/* TOTAL + P&L preview */}
+          <div className="total-row">
+            <div>
+              <p className="total-label">Total Value</p>
+              {profit !== null && (
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: parseFloat(profit) >= 0 ? 'var(--lime-dk)' : 'var(--chili-lt)', fontFamily: "'DM Mono', monospace" }}>
+                  {parseFloat(profit) >= 0 ? '▲' : '▼'} {formatINR(Math.abs(parseFloat(profit)))} {parseFloat(profit) >= 0 ? 'profit' : 'loss'}
+                </span>
+              )}
+            </div>
+            <span className="total-value">
+              {qty && sellPrice ? formatINR(parseFloat(qty) * parseFloat(sellPrice)) : '₹ —'}
+            </span>
+          </div>
+
+          {/* After-sale preview */}
+          {previewAvg !== null && qty && sellPrice && parseFloat(qty) > 0 && (
+            <div style={{ padding: '0.65rem 0.85rem', borderRadius: 10, background: 'var(--bg-raised)', border: '1px solid var(--rim)', display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', gap: '0.5rem', fontFamily: "'DM Mono', monospace" }}>
+              <span style={{ color: 'var(--text-2)' }}>After: {previewQty.toFixed(2)} kg · {formatINR(previewValue > 0 ? Math.round(previewValue) : 0)}</span>
+              <span style={{ fontWeight: 600, color: previewAvg < avgBuyPrice ? 'var(--lime-dk)' : previewAvg > avgBuyPrice ? 'var(--chili-lt)' : 'var(--text-1)' }}>
+                avg {formatINR(previewAvg)}/kg
+              </span>
+            </div>
+          )}
+
+          <div className="submit-row">
+            <button type="submit" className="submit-btn sell" disabled={submitting}>
+              {submitting
+                ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 0.8s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Saving…</>
+                : <><ShoppingBag size={17} /> Record Sale</>
+              }
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -1808,21 +1813,25 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
-      <h1 className="title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <CalendarDays size={22} /> Daily Summary
-      </h1>
-      <p className="subtitle" style={{ marginBottom: '1.25rem' }}>Purchase & sale breakdown by date</p>
+      {/* Header */}
+      <header className="app-header">
+        <div className="app-header-brand">
+          <img src="/kvs-logo.png" alt="KVS" />
+          <h1 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>Daily Summary</h1>
+        </div>
+      </header>
 
+      <div className="page-section" style={{ paddingTop: '1rem' }}>
       {/* ── Shop Mode Toggle ── */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
         <button
           onClick={() => setViewMode('all')}
           style={{
-            flex: 1, padding: '0.5rem', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600,
-            border: viewMode === 'all' ? '1px solid var(--primary-accent)' : '1px solid rgba(255,255,255,0.1)',
-            background: viewMode === 'all' ? 'rgba(88,166,255,0.15)' : 'rgba(255,255,255,0.04)',
-            color: viewMode === 'all' ? 'var(--primary-accent)' : 'var(--text-secondary)',
-            cursor: 'pointer', transition: 'all 0.15s ease',
+            flex: 1, padding: '0.5rem', borderRadius: 10, fontSize: '0.78rem', fontWeight: 700,
+            border: viewMode === 'all' ? '1px solid var(--primary-ctn)' : '1px solid rgba(60,74,66,0.3)',
+            background: viewMode === 'all' ? 'rgba(52,211,153,0.1)' : 'var(--bg-high)',
+            color: viewMode === 'all' ? 'var(--primary-ctn)' : 'var(--text-secondary)',
+            cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: 'Manrope, sans-serif',
           }}
         >
           All Shops
@@ -1830,11 +1839,11 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
         <button
           onClick={() => setViewMode('shop')}
           style={{
-            flex: 1, padding: '0.5rem', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600,
-            border: viewMode === 'shop' ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
-            background: viewMode === 'shop' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.04)',
-            color: viewMode === 'shop' ? '#10b981' : 'var(--text-secondary)',
-            cursor: 'pointer', transition: 'all 0.15s ease',
+            flex: 1, padding: '0.5rem', borderRadius: 10, fontSize: '0.78rem', fontWeight: 700,
+            border: viewMode === 'shop' ? '1px solid var(--primary-ctn)' : '1px solid rgba(60,74,66,0.3)',
+            background: viewMode === 'shop' ? 'rgba(52,211,153,0.1)' : 'var(--bg-high)',
+            color: viewMode === 'shop' ? 'var(--primary-ctn)' : 'var(--text-secondary)',
+            cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: 'Manrope, sans-serif',
           }}
         >
           Per Shop
@@ -2351,6 +2360,7 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
           );
         })
       )}
+      </div>{/* end page-section */}
     </div>
   );
 }
@@ -2966,197 +2976,175 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     doc.save(`KVS_Overall_Report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
   };
 
+  // Group shopRecords by date for timeline view
+  const groupedRecords = shopRecords.reduce((acc, r) => {
+    const dk = format(new Date(r.date), 'yyyy-MM-dd');
+    if (!acc[dk]) acc[dk] = [];
+    acc[dk].push(r);
+    return acc;
+  }, {});
+  const groupedDates = Object.keys(groupedRecords).sort((a, b) => new Date(b) - new Date(a));
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
-      <h1 className="title">History</h1>
-      <p className="subtitle" style={{ marginBottom: '1.5rem' }}>Purchases & sales for each branch</p>
+      {/* Header */}
+      <header className="app-header">
+        <div className="app-header-brand">
+          <img src="/kvs-logo.png" alt="KVS" />
+          <h1 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>History</h1>
+        </div>
+        <div className="app-header-actions">
+          <button className="icon-btn" onClick={() => viewReport('shop')} title={`View ${selectedShop} report`}>
+            <Eye size={16} />
+          </button>
+          <button className="icon-btn green" onClick={generatePDF} title="Download PDF">
+            <Download size={16} />
+          </button>
+        </div>
+      </header>
 
-      <div className="shop-selector">
-        {shops.map(shop => (
-          <div
-            key={shop}
-            className={`shop-tab ${selectedShop === shop ? 'active' : ''}`}
-            onClick={() => onSelectShop(shop)}
-          >
-            {shop}
+      <div className="page-section" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* Shop Selector */}
+        <div className="shop-selector">
+          {shops.map(shop => (
+            <div
+              key={shop}
+              className={`shop-tab ${selectedShop === shop ? 'active' : ''}`}
+              onClick={() => onSelectShop(shop)}
+            >
+              {shop}
+            </div>
+          ))}
+        </div>
+
+        {/* Filter row */}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div className="filter-pill-group" style={{ flex: 1 }}>
+            <button
+              className={`filter-pill ${filterType === 'all' ? 'active-buy' : ''}`}
+              onClick={() => setFilterType('all')}
+            >All</button>
+            <button
+              className={`filter-pill ${filterType === 'purchase' ? 'active-buy' : ''}`}
+              onClick={() => setFilterType('purchase')}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+              Buys
+            </button>
+            <button
+              className={`filter-pill ${filterType === 'sale' ? 'active-sell' : ''}`}
+              onClick={() => setFilterType('sale')}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+              Sales
+            </button>
           </div>
-        ))}
-      </div>
-
-      {/* ── Date Range & Filter ── */}
-      <div className="glass-card" style={{ marginBottom: '1rem', padding: '1rem 1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <Filter size={16} style={{ color: 'var(--primary-accent)' }} />
-          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>Filter Records</span>
           {(dateFrom || dateTo || filterType !== 'all') && (
             <button
               onClick={() => { setDateFrom(''); setDateTo(''); setFilterType('all'); }}
-              style={{
-                marginLeft: 'auto', fontSize: '0.7rem', padding: '0.2rem 0.6rem',
-                borderRadius: 6, border: '1px solid rgba(248,113,113,0.3)',
-                background: 'rgba(248,113,113,0.08)', color: 'var(--danger)',
-                cursor: 'pointer',
-              }}
+              style={{ padding: '0.4rem 0.75rem', borderRadius: 9, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.08)', color: 'var(--danger)', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'Manrope, sans-serif' }}
             >
               Clear
             </button>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-          <div style={{ flex: 1, minWidth: 130 }}>
-            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>From</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              style={{
-                width: '100%', padding: '0.5rem', borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
-                fontSize: '0.85rem',
-              }}
-            />
-          </div>
-          <div style={{ flex: 1, minWidth: 130 }}>
-            <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>To</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              style={{
-                width: '100%', padding: '0.5rem', borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
-                fontSize: '0.85rem',
-              }}
-            />
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {['all', 'purchase', 'sale'].map(t => (
-            <button
-              key={t}
-              onClick={() => setFilterType(t)}
-              style={{
-                flex: 1, padding: '0.4rem', borderRadius: 8, fontSize: '0.75rem', fontWeight: 600,
-                border: filterType === t ? '1px solid var(--primary-accent)' : '1px solid rgba(255,255,255,0.1)',
-                background: filterType === t ? 'rgba(88,166,255,0.15)' : 'rgba(255,255,255,0.04)',
-                color: filterType === t ? 'var(--primary-accent)' : 'var(--text-secondary)',
-                cursor: 'pointer', transition: 'all 0.15s ease',
-              }}
-            >
-              {t === 'all' ? 'All' : t === 'purchase' ? '↓ Buys' : '↑ Sales'}
-            </button>
-          ))}
-        </div>
-        {(dateFrom || dateTo) && (
-          <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-            Showing {shopRecords.length} record{shopRecords.length !== 1 ? 's' : ''}
-            {dateFrom && ` from ${format(new Date(dateFrom), 'dd MMM yyyy')}`}
-            {dateTo && ` to ${format(new Date(dateTo), 'dd MMM yyyy')}`}
-          </div>
-        )}
-      </div>
 
-      <div className="glass-card history-buttons-row" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {/* Date range */}
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)' }} onClick={() => viewReport('shop')}>
-            <Eye size={18} />
-            View {selectedShop} {(dateFrom || dateTo) ? '(Filtered)' : ''}
-          </button>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'var(--primary-accent)', opacity: 0.8 }} onClick={generatePDF}>
-            <Download size={18} />
-            Download
-          </button>
+          <div style={{ flex: 1 }}>
+            <label className="form-label muted" style={{ marginBottom: '0.3rem' }}>From</label>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              className="input-field" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', borderRadius: 10 }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label className="form-label muted" style={{ marginBottom: '0.3rem' }}>To</label>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              className="input-field" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', borderRadius: 10 }} />
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)' }} onClick={() => viewReport('overall')}>
-            <Eye size={18} />
-            View Overall (All Shops)
-          </button>
-          <button className="btn btn-primary" style={{ flex: 1, background: 'rgba(76,175,80,0.9)', opacity: 0.8 }} onClick={generateOverallPDF}>
-            <Download size={18} />
-            Download
-          </button>
-        </div>
-      </div>
 
-      <h2 className="title" style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>
-        {filterType === 'all' ? 'All Records' : filterType === 'purchase' ? 'Purchase Records' : 'Sale Records'}
-        <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 8 }}>
-          ({shopRecords.length})
-        </span>
-      </h2>
-      <div className="glass-card" style={{ padding: '0 1.25rem' }}>
+        {/* Report buttons */}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="action-btn-outline" onClick={() => viewReport('overall')}>
+            <Eye size={14} />
+            All Shops Report
+          </button>
+          <button className="action-btn-outline" onClick={generateOverallPDF} style={{ flex: 0, padding: '0.65rem 0.85rem' }}>
+            <Download size={14} />
+          </button>
+        </div>
+
+        {/* Timeline */}
         {shopRecords.length === 0 ? (
-          <p style={{ padding: '1rem 0', textAlign: 'center', color: 'var(--text-secondary)' }}>No records yet.</p>
+          <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            No records {filterType !== 'all' ? `(${filterType === 'purchase' ? 'purchases' : 'sales'})` : ''} yet.
+          </div>
         ) : (
-          shopRecords.map(r => (
-            <div key={r.id} className="history-item" style={{ position: 'relative' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                  <span style={{
-                    fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem',
-                    borderRadius: 6,
-                    background: r.kind === 'sale' ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
-                    color: r.kind === 'sale' ? 'var(--danger)' : 'var(--primary-accent)',
-                    border: `1px solid ${r.kind === 'sale' ? 'rgba(239,68,68,0.3)' : 'rgba(59,130,246,0.3)'}`,
-                  }}>
-                    {r.kind === 'sale' ? '↑ SALE' : '↓ BUY'}
-                  </span>
-                  <span className={`badge badge-${r.type.replace('_', '-')}`}>
-                    {r.type.replace('_', ' ')}
-                  </span>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{r.qty} Kg</span>
-                  {r.kind === 'sale' && r.buyerName && (
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>→ {r.buyerName}</span>
-                  )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {groupedDates.map(dk => {
+              const dayDate = new Date(dk + 'T00:00:00');
+              const todayStr = format(new Date(), 'yyyy-MM-dd');
+              const yesterdayStr = format(new Date(Date.now() - 86400000), 'yyyy-MM-dd');
+              const dayLabel = dk === todayStr ? 'Today' : dk === yesterdayStr ? 'Yesterday' : format(dayDate, 'MMM d, yyyy');
+
+              return (
+                <div key={dk}>
+                  <div className="timeline-group-header">
+                    <span className="timeline-group-label">{dayLabel}</span>
+                    <div className="timeline-divider" />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    {groupedRecords[dk].map(r => {
+                      const spice = spices.find(s => s.id === r.type);
+                      const txValue = r.totalValue ? r.totalValue : (r.qty * (r.sellPrice || r.price));
+                      return (
+                        <div key={r.id} className={`tx-card ${r.kind}`}>
+                          <div className={`tx-icon ${r.kind}`}>
+                            {r.kind === 'purchase'
+                              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+                            }
+                          </div>
+                          <div className="tx-info">
+                            <div className="tx-name" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              {spice && <div className="spice-dot" style={{ background: spice.color }} />}
+                              {r.type.replace('_', ' ')}
+                            </div>
+                            <div className="tx-meta">
+                              {format(new Date(r.date), 'h:mm a')}
+                              {' · '}{r.qty} kg @ {formatINR(r.kind === 'sale' ? r.sellPrice : r.price)}/kg
+                              {r.kind === 'sale' && r.buyerName && ` → ${r.buyerName}`}
+                            </div>
+                          </div>
+                          <div className="tx-values">
+                            <div className="tx-total" style={{ color: r.kind === 'sale' ? 'var(--primary-ctn)' : 'var(--text-primary)' }}>
+                              {formatINR(txValue)}
+                            </div>
+                          </div>
+                          <div className="tx-actions">
+                            <button
+                              className="tx-action-btn"
+                              onClick={() => { setEditRecord(r); setEditQty(String(r.qty)); setEditPrice(String(r.kind === 'sale' ? r.sellPrice : r.price)); }}
+                              title="Edit"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              className="tx-action-btn danger"
+                              onClick={() => r.kind === 'sale' ? onDeleteSale(r.id) : onDeleteEntry(r.id)}
+                              title="Delete"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  {format(new Date(r.date), 'MMM d, yyyy - h:mm a')}
-                  {' • '}{formatINR(r.kind === 'sale' ? r.sellPrice : r.price)}/kg
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <div style={{ fontWeight: 700, fontSize: '1rem', color: r.kind === 'sale' ? '#10b981' : 'var(--text-primary)', textAlign: 'right' }}>
-                  {formatINR(r.totalValue ? r.totalValue : (r.qty * (r.sellPrice || r.price)))}
-                </div>
-                <button
-                  onClick={() => {
-                    setEditRecord(r);
-                    setEditQty(String(r.qty));
-                    setEditPrice(String(r.kind === 'sale' ? r.sellPrice : r.price));
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 30, height: 30, borderRadius: 8,
-                    border: '1px solid rgba(88,166,255,0.25)',
-                    background: 'rgba(88,166,255,0.08)',
-                    color: '#58a6ff', cursor: 'pointer',
-                    transition: 'all 0.15s ease', flexShrink: 0,
-                  }}
-                >
-                  <Pencil size={14} />
-                </button>
-                <button
-                  onClick={() => r.kind === 'sale' ? onDeleteSale(r.id) : onDeleteEntry(r.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 30, height: 30,
-                    borderRadius: 8,
-                    border: '1px solid rgba(248,113,113,0.25)',
-                    background: 'rgba(248,113,113,0.08)',
-                    color: 'var(--danger)',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          ))
+              );
+            })}
+          </div>
         )}
       </div>
 

@@ -21,8 +21,14 @@ const CONFIG = {
   SHEET_ID: '1H_4Br3r1RePxAahV4RixHzsmVjSHqhQuT4JG-mXhPe8',
   
   // WhatsApp Business API
+  // ⚠️  TOKEN EXPIRED? → Get a new one:
+  //   1. Go to https://developers.facebook.com/tools/explorer/
+  //   2. Select your app → Add permissions: whatsapp_business_messaging
+  //   3. Generate token → paste below
+  //   For a never-expiring token: use a System User token from
+  //   business.facebook.com → Settings → System Users → Generate token
   PHONE_NUMBER_ID: '1011310968737351',
-  ACCESS_TOKEN: 'EAAR8U9VwhvYBRPZA1pD3pE2nzZCqNl5bjfFj3ZC4WSZA2UIyzIWEt5xoNiZAv8CJWA9MZCXbzXed1dPkKyPj30PJ3zZAZC8BxRDAi2o9uX4NMXlifFnoakOHpg2bIz9m3dLUcMSGgITK3UVjZCPvasS0Ujj1pvlRwhcbUxL4JZA7ZAOeyg4C4pOBD8yJK61cIvdh4XE7gZDZD',
+  ACCESS_TOKEN: 'EAAR8U9VwhvYBRKsBGbm5TgOXct5GFyRKL6J2a2ptZCZA7hMXZCXFoUX2NamIyQZCP35MzC02iefVGU108TnKZABcBXudmlZBR5xoZABMihGhDaKh8iDE9KMTLwkTXZC2k3KApNe8rfjeJAwKvC2VifYvdSAE11uuMzZCXoFzLsD9DmQ0ZC7Fgm8njtd6ciaEWf0gdRywZDZD', // System User token — never expires
   
   // Recipient phone number (with country code, no + or spaces)
   RECIPIENT: '919946182774',
@@ -66,9 +72,13 @@ function sendDailySummary() {
   const message = buildSummaryMessage(displayDate, purchases, sales);
   
   // ── Send via WhatsApp API ──
-  sendWhatsAppMessage(message);
-  
-  Logger.log('✅ WhatsApp summary sent for ' + displayDate);
+  try {
+    sendWhatsAppMessage(message);
+    Logger.log('✅ WhatsApp summary sent for ' + displayDate);
+  } catch (err) {
+    Logger.log('❌ Daily summary send failed: ' + err.message);
+    Logger.log('👉 If token expired: update ACCESS_TOKEN in CONFIG at the top of this file.');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -97,8 +107,13 @@ function sendWeeklySummary() {
   }
 
   const message = buildWeeklyMessage(displayFrom, displayTo, purchases, sales);
-  sendWhatsAppMessage(message);
-  Logger.log('✅ Weekly WhatsApp summary sent for ' + displayFrom + ' – ' + displayTo);
+  try {
+    sendWhatsAppMessage(message);
+    Logger.log('✅ Weekly WhatsApp summary sent for ' + displayFrom + ' – ' + displayTo);
+  } catch (err) {
+    Logger.log('❌ Weekly summary send failed: ' + err.message);
+    Logger.log('👉 If token expired: update ACCESS_TOKEN in CONFIG at the top of this file.');
+  }
 }
 
 /**
@@ -129,12 +144,15 @@ function getEntriesInRange(sheet, fromStr, toStr) {
     }
 
     if (rowDateStr >= fromStr && rowDateStr <= toStr) {
+      const price    = parseFloat(row[3]) || 0;
+      const totalVal = parseFloat(row[4]) || 0;
+      const qty      = price > 0 ? +(totalVal / price).toFixed(3) : (parseFloat(row[5]) || 0);
       entries.push({
         date: rowDate,
-        shop: normalizeShop(String(row[1] || '')),
-        type: String(row[2] || '').toLowerCase(),
-        qty: parseFloat(row[3]) || 0,
-        price: parseFloat(row[4]) || 0
+        type: String(row[1] || '').toLowerCase(),
+        shop: normalizeShop(String(row[2] || '')),
+        qty,
+        price
       });
     }
   }
@@ -248,12 +266,15 @@ function getTodayEntries(sheet, dateStr) {
     }
     
     if (rowDateStr === dateStr) {
+      const price    = parseFloat(row[3]) || 0;
+      const totalVal = parseFloat(row[4]) || 0;
+      const qty      = price > 0 ? +(totalVal / price).toFixed(3) : (parseFloat(row[5]) || 0);
       entries.push({
         date: rowDate,
-        shop: normalizeShop(String(row[1] || '')),
-        type: String(row[2] || '').toLowerCase(),
-        qty: parseFloat(row[3]) || 0,
-        price: parseFloat(row[4]) || 0
+        type: String(row[1] || '').toLowerCase(),
+        shop: normalizeShop(String(row[2] || '')),
+        qty,
+        price
       });
     }
   }
@@ -359,6 +380,11 @@ function buildSummaryMessage(displayDate, purchases, sales) {
 // 6. Submit & wait for approval (usually instant for utility)
 // ═══════════════════════════════════════════════════════════
 function sendWhatsAppMessage(text) {
+  if (!text || typeof text !== 'string') {
+    Logger.log('❌ sendWhatsAppMessage called with invalid text: ' + JSON.stringify(text));
+    throw new Error('sendWhatsAppMessage: text must be a non-empty string');
+  }
+
   const url = 'https://graph.facebook.com/v22.0/' + CONFIG.PHONE_NUMBER_ID + '/messages';
 
   // ── Try 1: Send as a plain text message (works inside 24h window) ──
@@ -427,8 +453,25 @@ function sendWhatsAppMessage(text) {
     return templateResult;
   }
 
-  Logger.log('❌ Both text and template failed: ' + JSON.stringify(templateResult.error));
-  throw new Error('WhatsApp send failed: ' + (templateResult.error ? templateResult.error.message : 'Unknown error'));
+  const errMsg = templateResult.error ? templateResult.error.message : 'Unknown error';
+  const errCode = templateResult.error ? templateResult.error.code : null;
+  const errSubcode = templateResult.error ? templateResult.error.error_subcode : null;
+
+  Logger.log('❌ Both text and template failed.');
+  Logger.log('   Code: ' + errCode + ' / Subcode: ' + errSubcode);
+  Logger.log('   Message: ' + errMsg);
+
+  // Token expired = code 190, subcode 463 or 467
+  if (errCode === 190) {
+    Logger.log('🔑 ACCESS TOKEN EXPIRED — fix steps:');
+    Logger.log('   1. Go to https://developers.facebook.com/tools/explorer/');
+    Logger.log('   2. Generate a new token with whatsapp_business_messaging permission');
+    Logger.log('   3. Paste it into CONFIG.ACCESS_TOKEN at the top of this file');
+    Logger.log('   TIP: Use a System User token (never expires) from business.facebook.com');
+    throw new Error('WhatsApp token expired (code 190). Update CONFIG.ACCESS_TOKEN.');
+  }
+
+  throw new Error('WhatsApp send failed: ' + errMsg);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -472,7 +515,10 @@ function _checkAndAlert(sheet, kind) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
 
-  const row = sheet.getRange(lastRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+  const row = sheet.getRange(lastRow, 1, 1, lastCol).getValues()[0];
+  if (!row || row.length === 0) return;
   const rowDate = row[0];
 
   // Only alert if the row was just added (within 60s)
@@ -487,16 +533,17 @@ function _checkAndAlert(sheet, kind) {
   const now = Date.now();
   if (isNaN(rowTime) || (now - rowTime) > 120000) return; // older than 2 min → skip
 
-  const shop  = normalizeShop(String(row[1] || ''));
-  const type  = String(row[2] || '').toLowerCase();
-  const qty   = parseFloat(row[3]) || 0;
-  const price = parseFloat(row[4]) || 0;
-  const value = Math.round(qty * price);
-  const label = CONFIG.SPICE_LABELS[type] || type;
-  const time  = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'hh:mm a');
+  // Sheet columns: date | type | shop | price | totalValue | qty | loadId
+  const type     = String(row[1] || '').toLowerCase();
+  const shop     = normalizeShop(String(row[2] || ''));
+  const price    = parseFloat(row[3]) || 0;
+  const totalVal = parseFloat(row[4]) || 0;
+  const qty      = price > 0 ? +(totalVal / price).toFixed(3) : (parseFloat(row[5]) || 0);
+  const value    = Math.round(qty * price);
+  const label    = CONFIG.SPICE_LABELS[type] || type;
+  const time     = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'hh:mm a');
 
   const emoji = kind === 'purchase' ? '🟢' : '🔴';
-  const verb  = kind === 'purchase' ? 'PURCHASED' : 'SOLD';
 
   let msg = emoji + ' *New ' + (kind === 'purchase' ? 'Purchase' : 'Sale') + '*\n';
   msg += '━━━━━━━━━━━━━━━━━━━━\n';
