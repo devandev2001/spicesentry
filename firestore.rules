@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // PIN-only app (no Firebase Auth on client). For production, add App Check
+    // and/or move sensitive writes to Cloud Functions.
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    match /config/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

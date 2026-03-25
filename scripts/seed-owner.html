@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SpiceSentry — Seed Owner Account</title>
+  <style>
+    body { font-family: system-ui; background: #0c0907; color: #f5f0e8; padding: 2rem; max-width: 500px; margin: auto; }
+    h1 { color: #f59e0b; }
+    input, button { padding: 0.7rem 1rem; border-radius: 8px; font-size: 1rem; width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
+    input { background: #1a1610; border: 1px solid rgba(255,200,100,0.2); color: #f5f0e8; }
+    button { background: #f59e0b; border: none; color: #1a0e04; font-weight: 700; cursor: pointer; }
+    button:hover { background: #fbbf24; }
+    #status { padding: 1rem; border-radius: 8px; margin-top: 1rem; }
+    .ok { background: rgba(74,222,128,0.15); border: 1px solid rgba(74,222,128,0.3); color: #4ade80; }
+    .err { background: rgba(244,63,94,0.15); border: 1px solid rgba(244,63,94,0.3); color: #fb7185; }
+    .note { font-size: 0.85rem; color: #a8956e; margin-bottom: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Seed Owner Account</h1>
+  <p class="note">Run this ONCE to create the first owner in Firestore. After that, use the CPanel to add more users.</p>
+
+  <label>Owner Name</label>
+  <input id="name" value="Admin" />
+
+  <label>PIN (4-6 digits)</label>
+  <input id="pin" type="password" inputmode="numeric" maxlength="6" placeholder="e.g. 1234" />
+
+  <label>Firebase API Key</label>
+  <input id="apiKey" placeholder="AIzaSy..." />
+
+  <label>Firebase Project ID</label>
+  <input id="projectId" value="kvs-traders" />
+
+  <label>Firebase App ID</label>
+  <input id="appId" placeholder="1:78981430758:web:..." />
+
+  <button onclick="seed()">Create Owner Account</button>
+  <div id="status"></div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
+    import { getFirestore, doc, setDoc } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
+
+    async function hashPin(pin) {
+      const data = new TextEncoder().encode(pin + '_kvs_salt_2026');
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    window.seed = async function() {
+      const status = document.getElementById('status');
+      const name = document.getElementById('name').value.trim();
+      const pin = document.getElementById('pin').value.trim();
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const projectId = document.getElementById('projectId').value.trim();
+      const appId = document.getElementById('appId').value.trim();
+
+      if (!name || !pin || !apiKey || !projectId || !appId) {
+        status.className = 'err';
+        status.textContent = 'All fields are required.';
+        return;
+      }
+      if (!/^\d{4,6}$/.test(pin)) {
+        status.className = 'err';
+        status.textContent = 'PIN must be 4-6 digits.';
+        return;
+      }
+
+      try {
+        status.className = '';
+        status.textContent = 'Creating...';
+
+        const app = initializeApp({
+          apiKey,
+          authDomain: projectId + '.firebaseapp.com',
+          projectId,
+          storageBucket: projectId + '.firebasestorage.app',
+          messagingSenderId: '78981430758',
+          appId,
+        });
+        const db = getFirestore(app);
+        const uid = name.toLowerCase().replace(/\s+/g, '_') + '_owner';
+        const hashed = await hashPin(pin);
+
+        await setDoc(doc(db, 'users', uid), {
+          name,
+          pin: hashed,
+          role: 'owner',
+          shop: null,
+          active: true,
+          createdAt: Date.now(),
+        });
+
+        status.className = 'ok';
+        status.innerHTML = `Owner "<b>${name}</b>" created with UID: <code>${uid}</code><br><br>Now update your <code>.env</code> file with the API key and App ID, then start the app and login with this name + PIN.`;
+      } catch (err) {
+        status.className = 'err';
+        status.textContent = 'Error: ' + err.message;
+      }
+    };
+  </script>
+</body>
+</html>

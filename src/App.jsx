@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil } from 'lucide-react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil, Settings, LogOut } from 'lucide-react';
 import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { useAuth } from './AuthContext';
+import LoginPage from './LoginPage';
+import CPanel from './CPanel';
 
 // ── Toast Notification System ──
 let _toastId = 0;
@@ -108,7 +111,8 @@ function buildDefaultLoads() {
   return initial;
 }
 
-function App() {
+function MainApp() {
+  const { isOwner, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
   const [syncing, setSyncing] = useState(false);
@@ -662,50 +666,57 @@ function App() {
       )}
 
       <div className="content-area">
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            stats={stats} 
-            allBranchStats={allBranchStats}
-            shops={SHOPS}
-            selectedShop={selectedShop}
-            onSelectShop={setSelectedShop}
-            days={daysSinceLoadStart}
-            onDispatch={handleDispatchLoad}
-            onTransfer={openTransferModal}
-            syncing={syncing}
-            lastSync={lastSync}
-            onRefresh={() => refreshFromSheets()}
-            entries={entries}
-            sales={sales}
-            shopLoads={shopLoads}
-          />
-        )}
-        {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} showToast={showToast} />}
-        {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} showToast={showToast} />}
-        {activeTab === 'daily' && (
-          <DailyPurchases
-            entries={entries}
-            sales={sales}
-            shops={SHOPS}
-            spices={SPICES}
-            selectedShop={selectedShop}
-            onSelectShop={setSelectedShop}
-          />
-        )}
-        {activeTab === 'history' && (
-          <History 
-            entries={entries}
-            sales={sales}
-            selectedShop={selectedShop}
-            onSelectShop={setSelectedShop}
-            shops={SHOPS}
-            spices={SPICES}
-            shopLoads={shopLoads}
-            onDeleteEntry={handleDeleteEntry}
-            onDeleteSale={handleDeleteSale}
-            onEditEntry={handleEditEntry}
-            onEditSale={handleEditSale}
-          />
+        {activeTab === 'cpanel' && isOwner ? (
+          <CPanel onBack={() => goTo('dashboard')} shops={SHOPS} spices={SPICES} />
+        ) : (
+          <>
+            {activeTab === 'dashboard' && (
+              <Dashboard 
+                stats={stats} 
+                allBranchStats={allBranchStats}
+                shops={SHOPS}
+                selectedShop={selectedShop}
+                onSelectShop={setSelectedShop}
+                days={daysSinceLoadStart}
+                onDispatch={isOwner ? handleDispatchLoad : undefined}
+                onTransfer={isOwner ? openTransferModal : undefined}
+                syncing={syncing}
+                lastSync={lastSync}
+                onRefresh={() => refreshFromSheets()}
+                entries={entries}
+                sales={sales}
+                shopLoads={shopLoads}
+                isOwner={isOwner}
+              />
+            )}
+            {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} showToast={showToast} />}
+            {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} showToast={showToast} />}
+            {activeTab === 'daily' && (
+              <DailyPurchases
+                entries={entries}
+                sales={sales}
+                shops={SHOPS}
+                spices={SPICES}
+                selectedShop={selectedShop}
+                onSelectShop={setSelectedShop}
+              />
+            )}
+            {activeTab === 'history' && (
+              <History 
+                entries={entries}
+                sales={sales}
+                selectedShop={selectedShop}
+                onSelectShop={setSelectedShop}
+                shops={SHOPS}
+                spices={SPICES}
+                shopLoads={shopLoads}
+                onDeleteEntry={isOwner ? handleDeleteEntry : undefined}
+                onDeleteSale={isOwner ? handleDeleteSale : undefined}
+                onEditEntry={isOwner ? handleEditEntry : undefined}
+                onEditSale={isOwner ? handleEditSale : undefined}
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -726,13 +737,27 @@ function App() {
           <ShoppingBag />
           <span>Sell</span>
         </button>
-        <button className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
-          <CalendarDays />
-          <span>Daily</span>
-        </button>
-        <button className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
-          <Clock />
-          <span>History</span>
+        {isOwner && (
+          <button className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
+            <CalendarDays />
+            <span>Daily</span>
+          </button>
+        )}
+        {isOwner && (
+          <button className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
+            <Clock />
+            <span>History</span>
+          </button>
+        )}
+        {isOwner && (
+          <button className={`nav-item ${activeTab === 'cpanel' ? 'active' : ''}`} onClick={() => goTo('cpanel')}>
+            <Settings />
+            <span>CPanel</span>
+          </button>
+        )}
+        <button className="nav-item nav-logout" onClick={logout}>
+          <LogOut />
+          <span>Logout</span>
         </button>
       </nav>
 
@@ -3402,6 +3427,21 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     </div>
   );
+}
+
+function App() {
+  const { loading, user } = useAuth();
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg)' }}>
+        <div className="spinner" />
+      </div>
+    );
+  }
+  if (!user) {
+    return <LoginPage />;
+  }
+  return <MainApp />;
 }
 
 export default App;
