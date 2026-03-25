@@ -720,44 +720,44 @@ function MainApp() {
         )}
       </div>
 
-      <nav className="bottom-nav">
+      <nav className="bottom-nav" aria-label="Main navigation">
         <div className="nav-brand">
           <img src="/kvs-logo.png" alt="KVS" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'contain' }} />
           <span>KVS Spices</span>
         </div>
-        <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => goTo('dashboard')}>
+        <button type="button" aria-label="Dashboard" title="Dashboard" className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => goTo('dashboard')}>
           <Home />
-          <span>Dashboard</span>
+          <span className="nav-item-label">Dashboard</span>
         </button>
-        <button className={`nav-item ${activeTab === 'add' ? 'active' : ''}`} onClick={() => goTo('add')}>
+        <button type="button" aria-label="Buy" title="Buy" className={`nav-item ${activeTab === 'add' ? 'active' : ''}`} onClick={() => goTo('add')}>
           <PlusCircle />
-          <span>Buy</span>
+          <span className="nav-item-label">Buy</span>
         </button>
-        <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => goTo('sell')}>
+        <button type="button" aria-label="Sell" title="Sell" className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => goTo('sell')}>
           <ShoppingBag />
-          <span>Sell</span>
+          <span className="nav-item-label">Sell</span>
         </button>
         {isOwner && (
-          <button className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
+          <button type="button" aria-label="Daily" title="Daily" className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
             <CalendarDays />
-            <span>Daily</span>
+            <span className="nav-item-label">Daily</span>
           </button>
         )}
         {isOwner && (
-          <button className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
+          <button type="button" aria-label="History" title="History" className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
             <Clock />
-            <span>History</span>
+            <span className="nav-item-label">History</span>
           </button>
         )}
         {isOwner && (
-          <button className={`nav-item ${activeTab === 'cpanel' ? 'active' : ''}`} onClick={() => goTo('cpanel')}>
+          <button type="button" aria-label="Control panel" title="CPanel" className={`nav-item ${activeTab === 'cpanel' ? 'active' : ''}`} onClick={() => goTo('cpanel')}>
             <Settings />
-            <span>CPanel</span>
+            <span className="nav-item-label">CPanel</span>
           </button>
         )}
-        <button className="nav-item nav-logout" onClick={logout}>
+        <button type="button" aria-label="Log out" title="Logout" className="nav-item nav-logout" onClick={logout}>
           <LogOut />
-          <span>Logout</span>
+          <span className="nav-item-label">Logout</span>
         </button>
       </nav>
 
