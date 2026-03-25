@@ -150,7 +150,7 @@ function getEntriesInRange(sheet, fromStr, toStr) {
       entries.push({
         date: rowDate,
         type: String(row[1] || '').toLowerCase(),
-        shop: normalizeShop(String(row[2] || '')),
+        shop: normalizeShop(String(row[5] || '')),
         qty,
         price
       });
@@ -268,11 +268,11 @@ function getTodayEntries(sheet, dateStr) {
     if (rowDateStr === dateStr) {
       const price    = parseFloat(row[3]) || 0;
       const totalVal = parseFloat(row[4]) || 0;
-      const qty      = price > 0 ? +(totalVal / price).toFixed(3) : (parseFloat(row[5]) || 0);
+      const qty      = price > 0 ? +(totalVal / price).toFixed(3) : 0;
       entries.push({
         date: rowDate,
         type: String(row[1] || '').toLowerCase(),
-        shop: normalizeShop(String(row[2] || '')),
+        shop: normalizeShop(String(row[5] || '')),
         qty,
         price
       });
@@ -533,12 +533,12 @@ function _checkAndAlert(sheet, kind) {
   const now = Date.now();
   if (isNaN(rowTime) || (now - rowTime) > 120000) return; // older than 2 min → skip
 
-  // Sheet columns: date | type | shop | price | totalValue | qty | loadId
+  // Sheet columns: date | type | qty | price | totalValue | shop | loadId | id
   const type     = String(row[1] || '').toLowerCase();
-  const shop     = normalizeShop(String(row[2] || ''));
+  const shop     = normalizeShop(String(row[5] || ''));
   const price    = parseFloat(row[3]) || 0;
   const totalVal = parseFloat(row[4]) || 0;
-  const qty      = price > 0 ? +(totalVal / price).toFixed(3) : (parseFloat(row[5]) || 0);
+  const qty      = price > 0 ? +(totalVal / price).toFixed(3) : (parseFloat(row[2]) || 0);
   const value    = Math.round(qty * price);
   const label    = CONFIG.SPICE_LABELS[type] || type;
   const time     = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'hh:mm a');
