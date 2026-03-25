@@ -169,15 +169,18 @@ function buildWeeklyMessage(fromDisplay, toDisplay, purchases, sales) {
 
   let grandBuyQty = 0, grandBuyVal = 0, grandSellQty = 0, grandSellVal = 0;
 
-  // ── PER-SHOP BREAKDOWN ──
-  for (const shop of CONFIG.SHOPS) {
-    const shopBuys  = purchases.filter(e => e.shop === shop);
-    const shopSales = sales.filter(e => e.shop === shop);
-    if (shopBuys.length === 0 && shopSales.length === 0) continue;
+  // ── PER-SHOP BREAKDOWN (use actual data keys, not CONFIG.SHOPS) ──
+  const allShops = [...new Set([
+    ...purchases.map(e => e.shop || 'Unknown'),
+    ...sales.map(e => e.shop || 'Unknown')
+  ])];
+
+  for (const shop of allShops) {
+    const shopBuys  = purchases.filter(e => (e.shop || 'Unknown') === shop);
+    const shopSales = sales.filter(e => (e.shop || 'Unknown') === shop);
 
     msg += '🏪 *' + shop + '*\n';
 
-    // Group by spice
     const spiceData = {};
     shopBuys.forEach(e => {
       if (!spiceData[e.type]) spiceData[e.type] = { buyQty: 0, buyVal: 0, sellQty: 0, sellVal: 0 };
@@ -192,21 +195,22 @@ function buildWeeklyMessage(fromDisplay, toDisplay, purchases, sales) {
 
     for (const [type, d] of Object.entries(spiceData)) {
       const label = CONFIG.SPICE_LABELS[type] || type;
-      let line = '  • ' + label + ': ';
       const parts = [];
       if (d.buyQty > 0) {
         const avg = Math.round(d.buyVal / d.buyQty);
-        parts.push('↓' + d.buyQty.toFixed(1) + 'kg @₹' + avg);
+        parts.push('↓' + d.buyQty.toFixed(1) + 'kg @₹' + avg
+                 + ' = ₹' + Math.round(d.buyVal).toLocaleString('en-IN'));
         grandBuyQty += d.buyQty;
         grandBuyVal += d.buyVal;
       }
       if (d.sellQty > 0) {
         const avg = Math.round(d.sellVal / d.sellQty);
-        parts.push('↑' + d.sellQty.toFixed(1) + 'kg @₹' + avg);
+        parts.push('↑' + d.sellQty.toFixed(1) + 'kg @₹' + avg
+                 + ' = ₹' + Math.round(d.sellVal).toLocaleString('en-IN'));
         grandSellQty += d.sellQty;
         grandSellVal += d.sellVal;
       }
-      msg += line + parts.join(' | ') + '\n';
+      msg += '  • ' + label + ': ' + parts.join(' | ') + '\n';
     }
     msg += '\n';
   }
@@ -294,73 +298,79 @@ function buildSummaryMessage(displayDate, purchases, sales) {
   let msg = '📊 *KVS Spices — Daily Summary*\n';
   msg += '📅 ' + displayDate + '\n';
   msg += '━━━━━━━━━━━━━━━━━━━━\n\n';
-  
+
   // ── PURCHASES ──
   if (purchases.length > 0) {
-    msg += '🟢 *PURCHASES*\n\n';
-    
-    // Group by shop
+    msg += '🟢 *PURCHASES*\n';
+    let totalQty = 0, totalValue = 0;
+
+    // Group by shop (use actual keys from data, not CONFIG.SHOPS)
     const byShop = {};
-    let totalQty = 0;
-    let totalValue = 0;
-    
     purchases.forEach(e => {
-      if (!byShop[e.shop]) byShop[e.shop] = {};
-      if (!byShop[e.shop][e.type]) byShop[e.shop][e.type] = { qty: 0, value: 0 };
-      byShop[e.shop][e.type].qty += e.qty;
-      byShop[e.shop][e.type].value += e.qty * e.price;
-      totalQty += e.qty;
+      const shopKey = e.shop || 'Unknown';
+      if (!byShop[shopKey]) byShop[shopKey] = {};
+      if (!byShop[shopKey][e.type]) byShop[shopKey][e.type] = { qty: 0, value: 0 };
+      byShop[shopKey][e.type].qty   += e.qty;
+      byShop[shopKey][e.type].value += e.qty * e.price;
+      totalQty  += e.qty;
       totalValue += e.qty * e.price;
     });
-    
-    for (const shop of CONFIG.SHOPS) {
-      if (!byShop[shop]) continue;
-      msg += '🏪 *' + shop + '*\n';
-      for (const [type, data] of Object.entries(byShop[shop])) {
-        const label = CONFIG.SPICE_LABELS[type] || type;
-        const avgPrice = data.qty > 0 ? Math.round(data.value / data.qty) : 0;
-        msg += '  • ' + label + ': ' + data.qty.toFixed(1) + ' kg @ ₹' + avgPrice + '/kg\n';
+
+    for (const [shop, spices] of Object.entries(byShop)) {
+      msg += '\n🏪 *' + shop + '*\n';
+      for (const [type, d] of Object.entries(spices)) {
+        const label    = CONFIG.SPICE_LABELS[type] || type;
+        const avgPrice = d.qty > 0 ? Math.round(d.value / d.qty) : 0;
+        const lineVal  = Math.round(d.value);
+        msg += '  • ' + label + ': ' + d.qty.toFixed(1) + ' kg @ ₹' + avgPrice + '/kg'
+             + ' = ₹' + lineVal.toLocaleString('en-IN') + '\n';
       }
-      msg += '\n';
     }
-    
-    msg += '📦 *Total Purchase: ' + totalQty.toFixed(1) + ' kg — ₹' + Math.round(totalValue).toLocaleString('en-IN') + '*\n\n';
+
+    msg += '\n📦 *Total Purchased: ' + totalQty.toFixed(1) + ' kg'
+         + ' — ₹' + Math.round(totalValue).toLocaleString('en-IN') + '*\n';
+  } else {
+    msg += '🟢 *PURCHASES*\n  (none today)\n';
   }
-  
+
+  msg += '\n';
+
   // ── SALES ──
   if (sales.length > 0) {
-    msg += '🔴 *SALES*\n\n';
-    
+    msg += '🔴 *SALES*\n';
+    let saleTotalQty = 0, saleTotalValue = 0;
+
     const bySaleShop = {};
-    let saleTotalQty = 0;
-    let saleTotalValue = 0;
-    
     sales.forEach(e => {
-      if (!bySaleShop[e.shop]) bySaleShop[e.shop] = {};
-      if (!bySaleShop[e.shop][e.type]) bySaleShop[e.shop][e.type] = { qty: 0, value: 0 };
-      bySaleShop[e.shop][e.type].qty += e.qty;
-      bySaleShop[e.shop][e.type].value += e.qty * e.price;
-      saleTotalQty += e.qty;
+      const shopKey = e.shop || 'Unknown';
+      if (!bySaleShop[shopKey]) bySaleShop[shopKey] = {};
+      if (!bySaleShop[shopKey][e.type]) bySaleShop[shopKey][e.type] = { qty: 0, value: 0 };
+      bySaleShop[shopKey][e.type].qty   += e.qty;
+      bySaleShop[shopKey][e.type].value += e.qty * e.price;
+      saleTotalQty  += e.qty;
       saleTotalValue += e.qty * e.price;
     });
-    
-    for (const shop of CONFIG.SHOPS) {
-      if (!bySaleShop[shop]) continue;
-      msg += '🏪 *' + shop + '*\n';
-      for (const [type, data] of Object.entries(bySaleShop[shop])) {
-        const label = CONFIG.SPICE_LABELS[type] || type;
-        const avgPrice = data.qty > 0 ? Math.round(data.value / data.qty) : 0;
-        msg += '  • ' + label + ': ' + data.qty.toFixed(1) + ' kg @ ₹' + avgPrice + '/kg\n';
+
+    for (const [shop, spices] of Object.entries(bySaleShop)) {
+      msg += '\n🏪 *' + shop + '*\n';
+      for (const [type, d] of Object.entries(spices)) {
+        const label    = CONFIG.SPICE_LABELS[type] || type;
+        const avgPrice = d.qty > 0 ? Math.round(d.value / d.qty) : 0;
+        const lineVal  = Math.round(d.value);
+        msg += '  • ' + label + ': ' + d.qty.toFixed(1) + ' kg @ ₹' + avgPrice + '/kg'
+             + ' = ₹' + lineVal.toLocaleString('en-IN') + '\n';
       }
-      msg += '\n';
     }
-    
-    msg += '💰 *Total Sales: ' + saleTotalQty.toFixed(1) + ' kg — ₹' + Math.round(saleTotalValue).toLocaleString('en-IN') + '*\n\n';
+
+    msg += '\n💰 *Total Sold: ' + saleTotalQty.toFixed(1) + ' kg'
+         + ' — ₹' + Math.round(saleTotalValue).toLocaleString('en-IN') + '*\n';
+  } else {
+    msg += '🔴 *SALES*\n  (none today)\n';
   }
-  
-  msg += '━━━━━━━━━━━━━━━━━━━━\n';
+
+  msg += '\n━━━━━━━━━━━━━━━━━━━━\n';
   msg += '🤖 _Auto-sent by KVS Spices_';
-  
+
   return msg;
 }
 
