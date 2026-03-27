@@ -19,11 +19,9 @@ export default function LoginPage() {
     });
   }, []);
 
+  // Do not focus PIN fields on step change — on phones that opens the keyboard immediately.
   useEffect(() => {
-    if (step === 'pin' && pinRefs.current[0]) {
-      pinRefs.current[0].focus({ preventScroll: false });
-      scrollCardIntoView();
-    }
+    if (step === 'pin') scrollCardIntoView();
   }, [step, scrollCardIntoView]);
 
   // When mobile keyboard opens, keep the form visible (iOS / Android)
@@ -77,7 +75,6 @@ export default function LoginPage() {
         if (!result.ok) {
           setError(result.error);
           setPin('');
-          setTimeout(() => pinRefs.current[0]?.focus(), 100);
         }
       })
       .catch(() => {
@@ -95,7 +92,6 @@ export default function LoginPage() {
       if (!result.ok) {
         setError(result.error);
         setPin('');
-        setTimeout(() => pinRefs.current[0]?.focus(), 100);
       }
     } catch (err) {
       setError('Connection failed. Check internet.');
@@ -134,7 +130,6 @@ export default function LoginPage() {
                 onChange={e => setUsername(e.target.value)}
                 placeholder="Enter your name..."
                 className="login-input"
-                autoFocus
                 autoComplete="username"
                 autoCapitalize="words"
                 enterKeyHint="next"

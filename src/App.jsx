@@ -816,7 +816,6 @@ function MainApp() {
               min="0"
               value={dispatchPrice}
               onChange={e => setDispatchPrice(e.target.value)}
-              autoFocus
               placeholder="Enter price..."
               style={{
                 width: '100%', padding: '0.75rem 1rem',
@@ -1436,7 +1435,6 @@ function AddEntry({ onAdd, shops, spices, showToast }) {
                 <input
                   type="number" step="0.01" inputMode="decimal" className="input-field has-suffix"
                   placeholder="0.00" value={qty} onChange={e => setQty(e.target.value)}
-                  autoFocus
                 />
                 <span className="input-suffix">kg</span>
               </div>
@@ -1597,7 +1595,6 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
                 <input
                   type="number" step="0.01" inputMode="decimal" className="input-field has-suffix"
                   placeholder="0.00" value={qty} onChange={e => setQty(e.target.value)}
-                  autoFocus
                 />
                 <span className="input-suffix">kg</span>
               </div>

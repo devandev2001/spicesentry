@@ -156,7 +156,7 @@ function UsersPanel({ users, addUser, updateUser, removeUser, resetPin, shops, c
             <div className="cpanel-form-grid">
               <div className="input-group">
                 <label className="form-label muted">Name</label>
-                <input className="input-field" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" autoFocus />
+                <input className="input-field" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" />
               </div>
               <div className="input-group">
                 <label className="form-label muted">{editingUid ? 'New PIN (leave blank to keep)' : 'PIN'}</label>
@@ -237,7 +237,7 @@ function UsersPanel({ users, addUser, updateUser, removeUser, resetPin, shops, c
             </h3>
             <div className="input-group">
               <label className="form-label muted">New PIN (4-6 digits)</label>
-              <input className="input-field" type="password" inputMode="numeric" maxLength={6} value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="Enter new PIN" autoFocus />
+              <input className="input-field" type="password" inputMode="numeric" maxLength={6} value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="Enter new PIN" />
             </div>
             <div className="cpanel-form-actions" style={{ marginTop: '1rem' }}>
               <button className="cpanel-cancel-btn" onClick={() => { setResetPinUid(null); setNewPin(''); }}>Cancel</button>
@@ -313,7 +313,7 @@ function ShopsPanel({ shops, configShops, setConfigShops, onUpdateConfig }) {
           <div key={i} className={`cpanel-list-item ${!s.active ? 'inactive' : ''}`}>
             {editingIdx === i ? (
               <div className="cpanel-inline-form" style={{ flex: 1 }}>
-                <input className="input-field" value={editName} onChange={e => setEditName(e.target.value)} autoFocus onKeyDown={e => e.key === 'Enter' && handleRename(i)} />
+                <input className="input-field" value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleRename(i)} />
                 <button className="submit-btn" style={{ height: 40, fontSize: '0.75rem' }} onClick={() => handleRename(i)}>Save</button>
                 <button className="cpanel-cancel-btn" onClick={() => setEditingIdx(null)}>Cancel</button>
               </div>
@@ -403,7 +403,7 @@ function SpicesPanel({ spices, configSpices, setConfigSpices, onUpdateConfig }) 
           <div key={i} className={`cpanel-list-item ${!s.active ? 'inactive' : ''}`}>
             {editingIdx === i ? (
               <div className="cpanel-inline-form" style={{ flex: 1 }}>
-                <input className="input-field" value={editLabel} onChange={e => setEditLabel(e.target.value)} autoFocus onKeyDown={e => e.key === 'Enter' && handleRename(i)} />
+                <input className="input-field" value={editLabel} onChange={e => setEditLabel(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleRename(i)} />
                 <button className="submit-btn" style={{ height: 40, fontSize: '0.75rem' }} onClick={() => handleRename(i)}>Save</button>
                 <button className="cpanel-cancel-btn" onClick={() => setEditingIdx(null)}>Cancel</button>
               </div>
