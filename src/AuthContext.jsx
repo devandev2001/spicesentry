@@ -39,13 +39,18 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const login = async (username, pin) => {
-    const normalized = (username || '').trim().replace(/\s+/g, ' ');
-    if (!normalized) return { ok: false, error: 'Enter your name' };
+  /** PIN-only login. Optional nameHint disambiguates when several users share the same PIN. */
+  const login = async (pin, nameHint = null) => {
+    const pinStr = String(pin || '').replace(/\D/g, '');
+    if (pinStr.length < 4) return { ok: false, error: 'Enter at least 4 digits' };
+    if (pinStr.length > 6) return { ok: false, error: 'PIN must be at most 6 digits' };
+
+    const normName = (s) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
     try {
       const usersSnap = await getDocs(collection(db, 'users'));
       const allUsers = usersSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
+      const activeUsers = allUsers.filter((u) => u.active !== false);
 
       if (allUsers.length === 0) {
         return {
@@ -55,24 +60,33 @@ export function AuthProvider({ children }) {
         };
       }
 
-      const needle = normalized.toLowerCase();
-      const found = allUsers.find((u) => {
-        const n = (u.name || '').trim().replace(/\s+/g, ' ').toLowerCase();
-        return n === needle && u.active !== false;
-      });
+      const hashed = await hashPin(pinStr);
+      const matches = activeUsers.filter((u) => u.pin === hashed);
 
-      if (!found) {
-        const hint = allUsers.map((u) => u.name).filter(Boolean).join(', ');
-        return {
-          ok: false,
-          error: hint
-            ? `No user "${normalized}". Try: ${hint}`
-            : `No user "${normalized}". Ask the owner to add you in CPanel.`,
-        };
+      if (matches.length === 0) {
+        return { ok: false, error: 'Wrong PIN' };
       }
 
-      const hashed = await hashPin(pin);
-      if (found.pin !== hashed) return { ok: false, error: 'Wrong PIN' };
+      let found = null;
+      if (matches.length === 1) {
+        found = matches[0];
+      } else if (nameHint && normName(nameHint)) {
+        const needle = normName(nameHint);
+        found = matches.find((u) => normName(u.name) === needle) || null;
+        if (!found) {
+          return { ok: false, error: 'That name does not match this PIN. Try another name below.' };
+        }
+      } else {
+        const candidates = [...new Set(matches.map((u) => u.name).filter(Boolean))].sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: 'base' }),
+        );
+        return {
+          ok: false,
+          needsName: true,
+          candidates,
+          error: 'This PIN matches more than one person. Tap your name to continue.',
+        };
+      }
 
       const session = { uid: found.uid, name: found.name, role: found.role, shop: found.shop || null };
       setUser(session);
