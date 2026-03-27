@@ -11,7 +11,7 @@ const TABS = [
 ];
 
 export default function CPanel({ onBack, shops, spices, onUpdateConfig }) {
-  const { users, fetchUsers, addUser, updateUser, removeUser, resetPin, isOwner, user: currentUser } = useAuth();
+  const { users, fetchUsers, addUser, updateUser, removeUser, resetPin, isOwner, user: currentUser, enrollBiometric, clearBiometricEnrollment, hasBiometricEnrollment, canUseBiometric } = useAuth();
   const [activeTab, setActiveTab] = useState('users');
   const [loaded, setLoaded] = useState(false);
 
@@ -68,7 +68,17 @@ export default function CPanel({ onBack, shops, spices, onUpdateConfig }) {
         {activeTab === 'users' && <UsersPanel users={users} addUser={addUser} updateUser={updateUser} removeUser={removeUser} resetPin={resetPin} shops={shops} currentUser={currentUser} loaded={loaded} />}
         {activeTab === 'shops' && <ShopsPanel shops={shops} configShops={configShops} setConfigShops={setConfigShops} onUpdateConfig={onUpdateConfig} />}
         {activeTab === 'spices' && <SpicesPanel spices={spices} configSpices={configSpices} setConfigSpices={setConfigSpices} onUpdateConfig={onUpdateConfig} />}
-        {activeTab === 'settings' && <SettingsPanel appSettings={appSettings} setAppSettings={setAppSettings} />}
+        {activeTab === 'settings' && (
+          <SettingsPanel
+            appSettings={appSettings}
+            setAppSettings={setAppSettings}
+            currentUser={currentUser}
+            enrollBiometric={enrollBiometric}
+            clearBiometricEnrollment={clearBiometricEnrollment}
+            hasBiometricEnrollment={hasBiometricEnrollment}
+            canUseBiometric={canUseBiometric}
+          />
+        )}
       </div>
     </div>
   );
@@ -429,10 +439,20 @@ function SpicesPanel({ spices, configSpices, setConfigSpices, onUpdateConfig }) 
 }
 
 // ─── Settings Panel ───────────────────────────────────────────────────
-function SettingsPanel({ appSettings, setAppSettings }) {
+function SettingsPanel({
+  appSettings,
+  setAppSettings,
+  currentUser,
+  enrollBiometric,
+  clearBiometricEnrollment,
+  hasBiometricEnrollment,
+  canUseBiometric,
+}) {
   const [sheetUrl, setSheetUrl] = useState(appSettings.gsheetUrl || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [bioBusy, setBioBusy] = useState(false);
+  const [bioMsg, setBioMsg] = useState('');
 
   useEffect(() => {
     setSheetUrl(appSettings.gsheetUrl || '');
@@ -450,6 +470,23 @@ function SettingsPanel({ appSettings, setAppSettings }) {
       console.error('Failed to save settings:', err);
     }
     setSaving(false);
+  };
+
+  const handleEnrollBiometric = async () => {
+    if (!canUseBiometric || !currentUser) return;
+    setBioBusy(true);
+    setBioMsg('');
+    const result = await enrollBiometric(currentUser);
+    setBioMsg(result.ok ? 'Biometric registered for this device.' : (result.error || 'Could not register biometric.'));
+    setBioBusy(false);
+  };
+
+  const handleClearBiometric = async () => {
+    setBioBusy(true);
+    setBioMsg('');
+    const result = await clearBiometricEnrollment();
+    setBioMsg(result.ok ? 'Biometric removed from this device.' : 'Could not remove biometric.');
+    setBioBusy(false);
   };
 
   return (
@@ -470,6 +507,29 @@ function SettingsPanel({ appSettings, setAppSettings }) {
             {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Settings'}
           </button>
         </div>
+      </div>
+
+      <div className="cpanel-form-card" style={{ marginTop: '1rem' }}>
+        <h3 className="section-title" style={{ marginBottom: '0.75rem' }}>Biometric Login</h3>
+        <p className="caption" style={{ marginBottom: '0.75rem' }}>
+          Register Face ID / Fingerprint on this device for quick unlock.
+        </p>
+        {!canUseBiometric && (
+          <p className="caption" style={{ color: 'var(--chili-lt)', marginBottom: '0.75rem' }}>
+            This browser/device does not support biometric WebAuthn.
+          </p>
+        )}
+        <div className="cpanel-form-actions">
+          <button className="submit-btn" onClick={handleEnrollBiometric} disabled={!canUseBiometric || bioBusy}>
+            {bioBusy ? 'Please wait...' : hasBiometricEnrollment ? 'Re-register Face/Fingerprint' : 'Register Face/Fingerprint'}
+          </button>
+          {hasBiometricEnrollment && (
+            <button className="cpanel-cancel-btn" onClick={handleClearBiometric} disabled={bioBusy}>
+              Remove from this device
+            </button>
+          )}
+        </div>
+        {bioMsg && <p className="caption" style={{ marginTop: 8 }}>{bioMsg}</p>}
       </div>
 
       <div className="cpanel-form-card" style={{ marginTop: '1rem' }}>

@@ -135,7 +135,17 @@ function buildDefaultLoads() {
 }
 
 function MainApp() {
-  const { isOwner, logout } = useAuth();
+  const {
+    user: currentUser,
+    isOwner,
+    logout,
+    login,
+    updateUser,
+    setupBiometric,
+    clearBiometricEnrollment,
+    hasBiometricEnrollment,
+    canUseBiometric,
+  } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
   const [syncing, setSyncing] = useState(false);
@@ -856,6 +866,18 @@ function MainApp() {
                 onEditSale={isOwner ? handleEditSale : undefined}
               />
             )}
+            {activeTab === 'mysettings' && (
+              <MySettings
+                currentUser={currentUser}
+                login={login}
+                updateUser={updateUser}
+                setupBiometric={setupBiometric}
+                clearBiometricEnrollment={clearBiometricEnrollment}
+                hasBiometricEnrollment={hasBiometricEnrollment}
+                canUseBiometric={canUseBiometric}
+                showToast={showToast}
+              />
+            )}
           </>
         )}
       </div>
@@ -877,6 +899,10 @@ function MainApp() {
           <ShoppingBag />
           <span className="nav-item-label">Sell</span>
         </button>
+        <button type="button" aria-label="Settings" title="Settings" className={`nav-item ${activeTab === 'mysettings' ? 'active' : ''}`} onClick={() => goTo('mysettings')}>
+          <Settings />
+          <span className="nav-item-label">Settings</span>
+        </button>
         {isOwner && (
           <button type="button" aria-label="Daily" title="Daily" className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
             <CalendarDays />
@@ -891,7 +917,7 @@ function MainApp() {
         )}
         {isOwner && (
           <button type="button" aria-label="Control panel" title="CPanel" className={`nav-item ${activeTab === 'cpanel' ? 'active' : ''}`} onClick={() => goTo('cpanel')}>
-            <Settings />
+            <BarChart3 />
             <span className="nav-item-label">CPanel</span>
           </button>
         )}
@@ -1812,6 +1838,121 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function MySettings({
+  currentUser,
+  login,
+  updateUser,
+  setupBiometric,
+  clearBiometricEnrollment,
+  hasBiometricEnrollment,
+  canUseBiometric,
+  showToast,
+}) {
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [savingPin, setSavingPin] = useState(false);
+  const [bioBusy, setBioBusy] = useState(false);
+
+  const handleChangePin = async (e) => {
+    e.preventDefault();
+    if (!/^\d{4}$/.test(currentPin)) { showToast('Current PIN must be 4 digits.', 'error'); return; }
+    if (!/^\d{4}$/.test(newPin)) { showToast('New PIN must be 4 digits.', 'error'); return; }
+    if (newPin !== confirmPin) { showToast('New PIN and confirm PIN do not match.', 'error'); return; }
+    if (!currentUser?.name) { showToast('No active user session.', 'error'); return; }
+    setSavingPin(true);
+    try {
+      const verify = await login(currentPin, currentUser.name);
+      if (!verify.ok) { showToast(verify.error || 'Current PIN is incorrect.', 'error'); return; }
+      await updateUser(currentUser.uid, { pin: newPin });
+      setCurrentPin('');
+      setNewPin('');
+      setConfirmPin('');
+      showToast('PIN changed successfully.', 'success');
+    } catch (err) {
+      showToast(err?.message || 'Failed to change PIN.', 'error');
+    } finally {
+      setSavingPin(false);
+    }
+  };
+
+  const handleSetupBiometric = async () => {
+    if (!canUseBiometric || !currentUser) return;
+    if (!/^\d{4}$/.test(currentPin)) { showToast('Enter current 4-digit PIN to register biometric.', 'warning'); return; }
+    setBioBusy(true);
+    try {
+      const result = await setupBiometric(currentPin, currentUser.name);
+      if (!result.ok) showToast(result.error || 'Biometric setup failed.', 'error');
+      else showToast('Biometric registered for this device.', 'success');
+    } finally {
+      setBioBusy(false);
+    }
+  };
+
+  const handleRemoveBiometric = async () => {
+    setBioBusy(true);
+    try {
+      const result = await clearBiometricEnrollment();
+      if (!result.ok) showToast('Could not remove biometric.', 'error');
+      else showToast('Biometric removed from this device.', 'success');
+    } finally {
+      setBioBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ animation: 'fadeIn 0.3s ease-in-out' }}>
+      <header className="app-header">
+        <div className="app-header-brand">
+          <img src="/kvs-logo.png" alt="KVS" />
+          <h1 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>My Settings</h1>
+        </div>
+      </header>
+
+      <div className="page-section" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="stat-card">
+          <p className="caption">Logged in as</p>
+          <p className="stat-value" style={{ fontSize: '1rem' }}>{currentUser?.name || '-'}</p>
+        </div>
+
+        <form className="form-section" onSubmit={handleChangePin}>
+          <label className="form-label muted">Current PIN</label>
+          <input className="input-field" type="password" inputMode="numeric" maxLength={4} value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+          <label className="form-label muted">New PIN</label>
+          <input className="input-field" type="password" inputMode="numeric" maxLength={4} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+          <label className="form-label muted">Confirm New PIN</label>
+          <input className="input-field" type="password" inputMode="numeric" maxLength={4} value={confirmPin} onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+          <div className="submit-row">
+            <button type="submit" className="submit-btn" disabled={savingPin}>{savingPin ? 'Updating...' : 'Change PIN'}</button>
+          </div>
+        </form>
+
+        <div className="form-section">
+          <label className="form-label muted">Biometric Login</label>
+          <p className="caption" style={{ marginBottom: '0.5rem' }}>
+            Register Face ID / Fingerprint for quick unlock on this device.
+          </p>
+          {!canUseBiometric && (
+            <p className="caption" style={{ color: 'var(--chili-lt)', marginBottom: '0.5rem' }}>
+              This browser/device does not support biometric login.
+            </p>
+          )}
+          <div className="submit-row" style={{ display: 'flex', gap: '0.6rem' }}>
+            <button type="button" className="submit-btn" onClick={handleSetupBiometric} disabled={!canUseBiometric || bioBusy}>
+              {bioBusy ? 'Please wait...' : hasBiometricEnrollment ? 'Re-register Biometric' : 'Register Biometric'}
+            </button>
+            {hasBiometricEnrollment && (
+              <button type="button" className="cpanel-cancel-btn" onClick={handleRemoveBiometric} disabled={bioBusy}>
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

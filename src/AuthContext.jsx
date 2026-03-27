@@ -142,6 +142,13 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const clearBiometricEnrollment = useCallback(() => {
+    localStorage.removeItem(BIOMETRIC_KEY);
+    localStorage.removeItem(BIOMETRIC_PROMPTED_KEY);
+    setHasBiometricEnrollment(false);
+    return { ok: true };
+  }, []);
+
   const authenticateByPinAndName = useCallback(async (pin, nameHint = null) => {
     if (Date.now() < lockoutUntil) {
       const secs = Math.max(1, Math.ceil((lockoutUntil - Date.now()) / 1000));
@@ -271,7 +278,7 @@ export function AuthProvider({ children }) {
       user, loading, isOwner, users,
       login, logout, fetchUsers,
       addUser, updateUser, removeUser, resetPin,
-      biometricLogin, enrollBiometric, setupBiometric, hasBiometricEnrollment, canUseBiometric: canUseWebAuthn(),
+      biometricLogin, enrollBiometric, setupBiometric, clearBiometricEnrollment, hasBiometricEnrollment, canUseBiometric: canUseWebAuthn(),
       hashPin,
     }}>
       {children}
