@@ -273,8 +273,8 @@ function MainApp() {
   };
 
   const refreshData = async (silent = false) => {
-    const ok = await refreshFromFirestore(silent);
-    if (!ok) await refreshFromSheets(silent);
+    const ok = await refreshFromSheets(silent);
+    if (!ok) await refreshFromFirestore(silent);
   };
 
   // ── Fetch on mount + periodic refresh ──

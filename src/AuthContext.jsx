@@ -142,23 +142,18 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  /** PIN-only login. Optional nameHint disambiguates when several users share the same PIN. */
-  const login = async (pin, nameHint = null) => {
+  const authenticateByPinAndName = useCallback(async (pin, nameHint = null) => {
     if (Date.now() < lockoutUntil) {
       const secs = Math.max(1, Math.ceil((lockoutUntil - Date.now()) / 1000));
       return { ok: false, error: `Too many attempts. Try again in ${secs}s.` };
     }
     const pinStr = String(pin || '').replace(/\D/g, '');
-    if (pinStr.length < 4) return { ok: false, error: 'Enter at least 4 digits' };
-    if (pinStr.length > 6) return { ok: false, error: 'PIN must be at most 6 digits' };
-
+    if (pinStr.length !== 4) return { ok: false, error: 'PIN must be exactly 4 digits' };
     const normName = (s) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
     try {
       const usersSnap = await getDocs(collection(db, 'users'));
       const allUsers = usersSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
       const activeUsers = allUsers.filter((u) => u.active !== false);
-
       if (allUsers.length === 0) {
         return {
           ok: false,
@@ -166,10 +161,8 @@ export function AuthProvider({ children }) {
             'No users in this database. On your computer run: npm run seed — then try again. Also check Firebase Console → Firestore → Data has a "users" collection.',
         };
       }
-
       const hashed = await hashPin(pinStr);
       const matches = activeUsers.filter((u) => u.pin === hashed);
-
       if (matches.length === 0) {
         const failed = Number(sessionStorage.getItem('spicesentry_failed_login') || '0') + 1;
         sessionStorage.setItem('spicesentry_failed_login', String(failed));
@@ -180,37 +173,12 @@ export function AuthProvider({ children }) {
         }
         return { ok: false, error: 'Wrong PIN' };
       }
-
-      let found = null;
-      if (matches.length === 1) {
-        found = matches[0];
-      } else if (nameHint && normName(nameHint)) {
-        const needle = normName(nameHint);
-        found = matches.find((u) => normName(u.name) === needle) || null;
-        if (!found) {
-          return { ok: false, error: 'That name does not match this PIN. Try another name below.' };
-        }
-      } else {
-        const candidates = [...new Set(matches.map((u) => u.name).filter(Boolean))].sort((a, b) =>
-          a.localeCompare(b, undefined, { sensitivity: 'base' }),
-        );
-        return {
-          ok: false,
-          needsName: true,
-          candidates,
-          error: 'This PIN matches more than one person. Tap your name to continue.',
-        };
-      }
-
-      const session = { uid: found.uid, name: found.name, role: found.role, shop: found.shop || null };
+      if (!nameHint || !normName(nameHint)) return { ok: false, error: 'Select user before entering PIN' };
+      const needle = normName(nameHint);
+      const found = matches.find((u) => normName(u.name) === needle) || null;
+      if (!found) return { ok: false, error: 'This PIN does not match selected user.' };
       sessionStorage.setItem('spicesentry_failed_login', '0');
-      setUser(session);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-      if (canUseWebAuthn() && !hasBiometricEnrollment && localStorage.getItem(BIOMETRIC_PROMPTED_KEY) !== '1') {
-        localStorage.setItem(BIOMETRIC_PROMPTED_KEY, '1');
-        void enrollBiometric(session);
-      }
-      return { ok: true, user: session };
+      return { ok: true, user: { uid: found.uid, name: found.name, role: found.role, shop: found.shop || null } };
     } catch (err) {
       console.error('Login Firestore error:', err);
       if (err?.code === 'permission-denied') {
@@ -221,7 +189,26 @@ export function AuthProvider({ children }) {
       }
       return { ok: false, error: err?.message || 'Could not reach database' };
     }
+  }, [lockoutUntil]);
+
+  /** PIN-only login. Optional nameHint disambiguates when several users share the same PIN. */
+  const login = async (pin, nameHint = null) => {
+    const result = await authenticateByPinAndName(pin, nameHint);
+    if (!result.ok) return result;
+    setUser(result.user);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(result.user));
+    return result;
   };
+
+  const setupBiometric = useCallback(async (pin, nameHint = null) => {
+    const result = await authenticateByPinAndName(pin, nameHint);
+    if (!result.ok) return result;
+    const enrolled = await enrollBiometric(result.user);
+    if (!enrolled.ok) return enrolled;
+    setUser(result.user);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(result.user));
+    return { ok: true, user: result.user };
+  }, [authenticateByPinAndName, enrollBiometric]);
 
   const logout = () => {
     setUser(null);
@@ -284,7 +271,7 @@ export function AuthProvider({ children }) {
       user, loading, isOwner, users,
       login, logout, fetchUsers,
       addUser, updateUser, removeUser, resetPin,
-      biometricLogin, enrollBiometric, hasBiometricEnrollment, canUseBiometric: canUseWebAuthn(),
+      biometricLogin, enrollBiometric, setupBiometric, hasBiometricEnrollment, canUseBiometric: canUseWebAuthn(),
       hashPin,
     }}>
       {children}
