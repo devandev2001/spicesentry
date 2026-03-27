@@ -12,6 +12,9 @@ import {
   query,
   where,
   orderBy,
+  writeBatch,
+  increment,
+  limit,
 } from 'firebase/firestore';
 
 // Public web client config (same as Firebase Console). Env vars override when set.
@@ -39,5 +42,20 @@ const app = initializeApp(firebaseConfig);
 // Memory cache avoids stale IndexedDB snapshots (sometimes showed 0 users after fixing config).
 const db = initializeFirestore(app, { localCache: memoryLocalCache() });
 
-export { db, collection, doc, getDocs, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy };
+export {
+  db,
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  writeBatch,
+  increment,
+  limit,
+};
 export default app;

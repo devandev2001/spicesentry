@@ -11,11 +11,43 @@ async function hashPin(pin) {
 }
 
 const SESSION_KEY = 'spicesentry_session';
+const BIOMETRIC_KEY = 'spicesentry_biometric';
+const BIOMETRIC_PROMPTED_KEY = 'spicesentry_biometric_prompted';
+
+const canUseWebAuthn = () =>
+  typeof window !== 'undefined' &&
+  typeof window.PublicKeyCredential !== 'undefined' &&
+  typeof navigator !== 'undefined' &&
+  !!navigator.credentials;
+
+const toBase64Url = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let str = '';
+  for (let i = 0; i < bytes.length; i += 1) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const fromBase64Url = (value) => {
+  const b64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+  const bin = atob(b64 + pad);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+};
+
+const randomChallenge = (size = 32) => {
+  const out = new Uint8Array(size);
+  crypto.getRandomValues(out);
+  return out;
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState([]);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
+  const [hasBiometricEnrollment, setHasBiometricEnrollment] = useState(false);
 
   useEffect(() => {
     try {
@@ -25,6 +57,15 @@ export function AuthProvider({ children }) {
       }
     } catch {}
     setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BIOMETRIC_KEY) || 'null');
+      setHasBiometricEnrollment(!!saved?.credentialId && !!saved?.session?.uid);
+    } catch {
+      setHasBiometricEnrollment(false);
+    }
   }, []);
 
   const fetchUsers = useCallback(async () => {
@@ -39,8 +80,74 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const enrollBiometric = useCallback(async (session) => {
+    if (!canUseWebAuthn()) return { ok: false, error: 'Biometric not supported on this device.' };
+    try {
+      const userId = new TextEncoder().encode(session.uid);
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          challenge: randomChallenge(),
+          rp: { name: 'SpiceSentry' },
+          user: {
+            id: userId,
+            name: session.name || session.uid,
+            displayName: session.name || 'SpiceSentry User',
+          },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+          timeout: 60000,
+          authenticatorSelection: {
+            userVerification: 'preferred',
+            residentKey: 'preferred',
+          },
+          attestation: 'none',
+        },
+      });
+      if (!credential?.rawId) return { ok: false, error: 'Biometric enrollment cancelled.' };
+      localStorage.setItem(
+        BIOMETRIC_KEY,
+        JSON.stringify({
+          credentialId: toBase64Url(credential.rawId),
+          session,
+          enrolledAt: new Date().toISOString(),
+        }),
+      );
+      localStorage.setItem(BIOMETRIC_PROMPTED_KEY, '1');
+      setHasBiometricEnrollment(true);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err?.message || 'Could not enroll biometric.' };
+    }
+  }, []);
+
+  const biometricLogin = useCallback(async () => {
+    if (!canUseWebAuthn()) return { ok: false, error: 'Biometric not supported on this device.' };
+    try {
+      const saved = JSON.parse(localStorage.getItem(BIOMETRIC_KEY) || 'null');
+      if (!saved?.credentialId || !saved?.session?.uid) {
+        return { ok: false, error: 'No biometric login configured on this device.' };
+      }
+      await navigator.credentials.get({
+        publicKey: {
+          challenge: randomChallenge(),
+          allowCredentials: [{ type: 'public-key', id: fromBase64Url(saved.credentialId) }],
+          timeout: 60000,
+          userVerification: 'preferred',
+        },
+      });
+      setUser(saved.session);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(saved.session));
+      return { ok: true, user: saved.session };
+    } catch (err) {
+      return { ok: false, error: err?.message || 'Biometric verification failed.' };
+    }
+  }, []);
+
   /** PIN-only login. Optional nameHint disambiguates when several users share the same PIN. */
   const login = async (pin, nameHint = null) => {
+    if (Date.now() < lockoutUntil) {
+      const secs = Math.max(1, Math.ceil((lockoutUntil - Date.now()) / 1000));
+      return { ok: false, error: `Too many attempts. Try again in ${secs}s.` };
+    }
     const pinStr = String(pin || '').replace(/\D/g, '');
     if (pinStr.length < 4) return { ok: false, error: 'Enter at least 4 digits' };
     if (pinStr.length > 6) return { ok: false, error: 'PIN must be at most 6 digits' };
@@ -64,6 +171,13 @@ export function AuthProvider({ children }) {
       const matches = activeUsers.filter((u) => u.pin === hashed);
 
       if (matches.length === 0) {
+        const failed = Number(sessionStorage.getItem('spicesentry_failed_login') || '0') + 1;
+        sessionStorage.setItem('spicesentry_failed_login', String(failed));
+        if (failed >= 5) {
+          setLockoutUntil(Date.now() + 60_000);
+          sessionStorage.setItem('spicesentry_failed_login', '0');
+          return { ok: false, error: 'Too many wrong attempts. Locked for 60 seconds.' };
+        }
         return { ok: false, error: 'Wrong PIN' };
       }
 
@@ -89,8 +203,13 @@ export function AuthProvider({ children }) {
       }
 
       const session = { uid: found.uid, name: found.name, role: found.role, shop: found.shop || null };
+      sessionStorage.setItem('spicesentry_failed_login', '0');
       setUser(session);
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      if (canUseWebAuthn() && !hasBiometricEnrollment && localStorage.getItem(BIOMETRIC_PROMPTED_KEY) !== '1') {
+        localStorage.setItem(BIOMETRIC_PROMPTED_KEY, '1');
+        void enrollBiometric(session);
+      }
       return { ok: true, user: session };
     } catch (err) {
       console.error('Login Firestore error:', err);
@@ -112,6 +231,11 @@ export function AuthProvider({ children }) {
   const addUser = async ({ name, pin, role, shop }) => {
     const uid = name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now();
     const hashed = await hashPin(pin);
+    const existing = await getDocs(collection(db, 'users'));
+    const dup = existing.docs
+      .map((d) => ({ uid: d.id, ...d.data() }))
+      .find((u) => u.active !== false && u.pin === hashed);
+    if (dup) throw new Error(`PIN already used by ${dup.name}. Use a unique PIN.`);
     await setDoc(doc(db, 'users', uid), {
       name,
       pin: hashed,
@@ -127,6 +251,11 @@ export function AuthProvider({ children }) {
     const payload = { ...updates };
     if (updates.pin) {
       payload.pin = await hashPin(updates.pin);
+      const existing = await getDocs(collection(db, 'users'));
+      const dup = existing.docs
+        .map((d) => ({ uid: d.id, ...d.data() }))
+        .find((u) => u.uid !== uid && u.active !== false && u.pin === payload.pin);
+      if (dup) throw new Error(`PIN already used by ${dup.name}. Use a unique PIN.`);
     }
     await updateDoc(doc(db, 'users', uid), payload);
     if (user && user.uid === uid) {
@@ -155,6 +284,7 @@ export function AuthProvider({ children }) {
       user, loading, isOwner, users,
       login, logout, fetchUsers,
       addUser, updateUser, removeUser, resetPin,
+      biometricLogin, enrollBiometric, hasBiometricEnrollment, canUseBiometric: canUseWebAuthn(),
       hashPin,
     }}>
       {children}

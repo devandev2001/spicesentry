@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useMemo, useState, useEffect, useRef } from 'react';
 import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil, Settings, LogOut } from 'lucide-react';
 import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'date-fns';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { useAuth } from './AuthContext';
+import { db, collection, doc, getDocs, setDoc, query, where, orderBy, limit, increment } from './firebase';
 import LoginPage from './LoginPage';
-import CPanel from './CPanel';
+const CPanel = lazy(() => import('./CPanel'));
 
 // ── Toast Notification System ──
 let _toastId = 0;
@@ -55,6 +54,30 @@ const GSHEET_URL = 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV9
 //  so we encode the payload in a query parameter instead)
 // ── Offline Queue ──
 const OFFLINE_QUEUE_KEY = 'spicesentry_offline_queue';
+const FIRESTORE_BACKFILL_DAYS = 180;
+const makeTxId = (kind, item) => {
+  const parts = [
+    kind,
+    item.shop || '',
+    item.type || '',
+    Number(item.qty || 0).toFixed(3),
+    Number(item.price ?? item.sellPrice ?? 0).toFixed(2),
+    item.date || '',
+    item.loadId || '',
+    item.buyerName || '',
+  ];
+  return parts.join('|').replace(/\s+/g, '_');
+};
+let _pdfTools = null;
+async function loadPdfTools() {
+  if (_pdfTools) return _pdfTools;
+  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
+  _pdfTools = { jsPDF, autoTable };
+  return _pdfTools;
+}
 
 function getOfflineQueue() {
   try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); }
@@ -118,6 +141,7 @@ function MainApp() {
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [syncStateById, setSyncStateById] = useState({});
 
   // ── Toast system ──
   const [toasts, setToasts] = useState([]);
@@ -160,11 +184,48 @@ function MainApp() {
     return load && load._fromSheet;
   };
 
-  // ── Reusable: fetch data from Google Sheets ──
   // Normalize legacy shop names (e.g. "KVS Anachal" → "Anachal")
   const normalizeShop = (item) => {
     if (item.shop === 'KVS Anachal') item.shop = 'Anachal';
     return item;
+  };
+
+  const deriveLoadsFromItems = (items) => {
+    const resolvedLoads = {};
+    items.forEach(item => {
+      if (item.shop && item.type && item.loadId) {
+        const key = `${item.shop}|${item.type}`;
+        if (!resolvedLoads[key]) {
+          resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now(), _fromSheet: false };
+        }
+      }
+    });
+    return resolvedLoads;
+  };
+
+  const refreshFromFirestore = async (silent = false) => {
+    if (!silent) setSyncing(true);
+    try {
+      const since = new Date();
+      since.setDate(since.getDate() - FIRESTORE_BACKFILL_DAYS);
+      const [purchaseSnap, saleSnap] = await Promise.all([
+        getDocs(query(collection(db, 'purchases'), where('date', '>=', since.toISOString()), orderBy('date', 'desc'), limit(2000))),
+        getDocs(query(collection(db, 'sales'), where('date', '>=', since.toISOString()), orderBy('date', 'desc'), limit(2000))),
+      ]);
+      const purchases = purchaseSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
+      const saleRows = saleSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
+      setEntries(purchases);
+      setSales(saleRows);
+      const loads = deriveLoadsFromItems([...purchases, ...saleRows]);
+      if (Object.keys(loads).length > 0) setShopLoads(prev => ({ ...prev, ...loads }));
+      setLastSync(new Date());
+      return true;
+    } catch (err) {
+      console.warn('Firestore sync failed:', err);
+      return false;
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const refreshFromSheets = async (silent = false) => {
@@ -202,17 +263,24 @@ function MainApp() {
       }
 
       setLastSync(new Date());
+      return true;
     } catch (err) {
       console.warn('Sheet sync failed:', err);
+      return false;
     } finally {
       setSyncing(false);
     }
   };
 
-  // ── Fetch on mount + auto-poll every 500ms ──
+  const refreshData = async (silent = false) => {
+    const ok = await refreshFromFirestore(silent);
+    if (!ok) await refreshFromSheets(silent);
+  };
+
+  // ── Fetch on mount + periodic refresh ──
   useEffect(() => {
-    refreshFromSheets();
-    const interval = setInterval(() => refreshFromSheets(true), 500);
+    refreshData();
+    const interval = setInterval(() => refreshData(true), 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -220,7 +288,7 @@ function MainApp() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      flushOfflineQueue().then(() => refreshFromSheets(true));
+      flushOfflineQueue().then(() => refreshData(true));
     };
     const handleOffline = () => setIsOffline(true);
     window.addEventListener('online', handleOnline);
@@ -252,7 +320,7 @@ function MainApp() {
   }, [entries, sales, shopLoads]);
 
   // Derived state: per-spice stats for the selected shop
-  const stats = SPICES.map(spice => {
+  const stats = useMemo(() => SPICES.map(spice => {
     const load = getLoad(selectedShop, spice.id);
     const useLoadFilter = hasRealLoad(selectedShop, spice.id);
     const spiceEntries = entries.filter(e => e.shop === selectedShop && e.type === spice.id && (!useLoadFilter || e.loadId === load.id));
@@ -287,10 +355,10 @@ function MainApp() {
       remainingValue: remainingQty > 0 ? +remainingValue.toFixed(2) : 0,
       totalBuyValue: +totalValue.toFixed(2),
     };
-  });
+  }), [entries, sales, selectedShop, shopLoads]);
 
   // All-branch stats: weighted avg price per spice across every shop's current load
-  const allBranchStats = SPICES.map(spice => {
+  const allBranchStats = useMemo(() => SPICES.map(spice => {
     let grandQty = 0;
     let grandValue = 0;
     let grandSoldValue = 0;
@@ -323,7 +391,7 @@ function MainApp() {
       avgPrice: grandRemainingQty > 0 ? +(grandRemainingValue / grandRemainingQty).toFixed(2) : (grandQty > 0 ? +(grandValue / grandQty).toFixed(2) : 0),
       perShop,
     };
-  });
+  }), [entries, sales, shopLoads]);
 
   // Days since the oldest active spice load started for this shop
   const oldestLoadStart = SPICES.reduce((oldest, spice) => {
@@ -331,12 +399,58 @@ function MainApp() {
     return load.start < oldest ? load.start : oldest;
   }, Date.now());
   const daysSinceLoadStart = Math.max(1, differenceInDays(new Date(), new Date(oldestLoadStart)) + 1);
+  const pendingSyncCount = useMemo(
+    () => Object.values(syncStateById).filter((s) => s === 'pending' || s === 'failed').length,
+    [syncStateById],
+  );
+
+  const updateDailySummary = async (record) => {
+    const day = (record.date || new Date().toISOString()).slice(0, 10);
+    const summaryId = `${record.shop || 'unknown'}|${day}`;
+    const qty = Number(record.qty || 0);
+    const value = Number(record.totalValue || (record.qty * (record.price ?? record.sellPrice)) || 0);
+    const payload = {
+      shop: record.shop || '',
+      date: day,
+      updatedAt: new Date().toISOString(),
+    };
+    if (record.kind === 'entry') {
+      payload.purchaseQty = increment(qty);
+      payload.purchaseValue = increment(value);
+    } else if (record.kind === 'sale') {
+      payload.saleQty = increment(qty);
+      payload.saleValue = increment(value);
+    }
+    await setDoc(doc(collection(db, 'daily_summaries'), summaryId), payload, { merge: true });
+  };
+
+  const syncFirestoreAndSheet = async ({ firestoreCollection, record, sheetPayload }) => {
+    const txId = record.txId || makeTxId(record.kind || firestoreCollection, record);
+    const fsRecord = { ...record, txId, mirrorStatus: 'pending', updatedAt: new Date().toISOString() };
+    setSyncStateById(prev => ({ ...prev, [txId]: 'pending' }));
+    await setDoc(doc(collection(db, firestoreCollection), txId), fsRecord, { merge: true });
+    await updateDailySummary(fsRecord);
+    try {
+      await postToSheet(sheetPayload);
+      await setDoc(doc(collection(db, firestoreCollection), txId), { mirrorStatus: 'synced', updatedAt: new Date().toISOString() }, { merge: true });
+      setSyncStateById(prev => ({ ...prev, [txId]: 'synced' }));
+    } catch (err) {
+      await setDoc(doc(collection(db, firestoreCollection), txId), { mirrorStatus: 'pending', mirrorError: String(err?.message || err) }, { merge: true });
+      setSyncStateById(prev => ({ ...prev, [txId]: 'failed' }));
+      throw err;
+    }
+  };
 
   const handleAddEntry = async (entry) => {
     const load = getLoad(entry.shop, entry.type);
+    const date = entry.date || new Date().toISOString();
+    const txId = makeTxId('entry', { ...entry, date, loadId: load.id });
     const newEntry = { 
       ...entry, 
-      id: Date.now(), 
+      id: txId,
+      txId,
+      kind: 'entry',
+      date,
       loadId: load.id, 
       totalValue: entry.qty * entry.price 
     };
@@ -346,21 +460,24 @@ function MainApp() {
     setSelectedShop(entry.shop);
 
     setTimeout(() => {
-      postToSheet({ ...newEntry, kind: 'entry' })
-        .then(() => refreshFromSheets(true))
-        .catch(err => console.error("Error sending to Google Sheets:", err));
+      syncFirestoreAndSheet({ firestoreCollection: 'purchases', record: newEntry, sheetPayload: { ...newEntry, kind: 'entry' } })
+        .then(() => refreshData(true))
+        .catch(err => console.error("Error syncing purchase:", err));
     }, 0);
   };
 
   const handleAddSale = async (sale) => {
     const load = getLoad(sale.shop, sale.type);
+    const date = new Date().toISOString();
+    const txId = makeTxId('sale', { ...sale, date, loadId: load.id });
     const newSale = {
       ...sale,
-      id: Date.now(),
+      id: txId,
+      txId,
       loadId: load.id,
       totalValue: sale.qty * sale.sellPrice,
       kind: 'sale',
-      date: new Date().toISOString(),
+      date,
     };
 
     setSales(prev => [newSale, ...prev]);
@@ -368,17 +485,18 @@ function MainApp() {
     setSelectedShop(sale.shop);
 
     setTimeout(() => {
-      postToSheet(newSale)
-        .then(() => refreshFromSheets(true))
-        .catch(err => console.error("Error sending sale to Google Sheets:", err));
+      syncFirestoreAndSheet({ firestoreCollection: 'sales', record: newSale, sheetPayload: newSale })
+        .then(() => refreshData(true))
+        .catch(err => console.error("Error syncing sale:", err));
     }, 0);
   };
 
   const handleDeleteEntry = async (id) => {
     if (await showConfirm('Delete this purchase entry?')) {
       setEntries(prev => prev.filter(e => e.id !== id));
+      await setDoc(doc(collection(db, 'purchases'), id.toString()), { deleted: true, deletedAt: new Date().toISOString() }, { merge: true });
       postToSheet({ kind: 'delete_entry', id: id.toString() })
-        .then(() => refreshFromSheets(true))
+        .then(() => refreshData(true))
         .catch(err => console.error("Error deleting entry from Sheets:", err));
     }
   };
@@ -386,8 +504,9 @@ function MainApp() {
   const handleDeleteSale = async (id) => {
     if (await showConfirm('Delete this sale entry?')) {
       setSales(prev => prev.filter(s => s.id !== id));
+      await setDoc(doc(collection(db, 'sales'), id.toString()), { deleted: true, deletedAt: new Date().toISOString() }, { merge: true });
       postToSheet({ kind: 'delete_sale', id: id.toString() })
-        .then(() => refreshFromSheets(true))
+        .then(() => refreshData(true))
         .catch(err => console.error("Error deleting sale from Sheets:", err));
     }
   };
@@ -396,6 +515,7 @@ function MainApp() {
   const handleEditEntry = async (id, updates) => {
     // Update locally
     setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+    await setDoc(doc(collection(db, 'purchases'), id.toString()), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
     // Delete old + insert new on Sheets
     await postToSheet({ kind: 'delete_entry', id: id.toString() });
     const entry = entries.find(e => e.id === id);
@@ -403,18 +523,19 @@ function MainApp() {
       const updated = { ...entry, ...updates, kind: 'entry' };
       await postToSheet(updated);
     }
-    refreshFromSheets(true);
+    refreshData(true);
   };
 
   const handleEditSale = async (id, updates) => {
     setSales(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+    await setDoc(doc(collection(db, 'sales'), id.toString()), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
     await postToSheet({ kind: 'delete_sale', id: id.toString() });
     const sale = sales.find(s => s.id === id);
     if (sale) {
       const updated = { ...sale, ...updates, kind: 'sale' };
       await postToSheet(updated);
     }
-    refreshFromSheets(true);
+    refreshData(true);
   };
 
   // Dispatch modal state
@@ -457,17 +578,20 @@ function MainApp() {
 
     const { spiceId, remainingQty, loadId } = dispatchModal;
 
+    const dispatchDate = new Date().toISOString();
+    const dispatchTxId = makeTxId('sale', { shop: selectedShop, type: spiceId, qty: remainingQty, sellPrice, buyerName: 'Dispatch', date: dispatchDate, loadId });
     const dispatchSale = {
       shop: selectedShop,
       type: spiceId,
       qty: remainingQty,
       sellPrice,
       buyerName: 'Dispatch',
-      id: Date.now(),
+      id: dispatchTxId,
+      txId: dispatchTxId,
       loadId,
       totalValue: remainingQty * sellPrice,
       kind: 'sale',
-      date: new Date().toISOString(),
+      date: dispatchDate,
     };
     setSales(prev => [dispatchSale, ...prev]);
 
@@ -487,10 +611,10 @@ function MainApp() {
     // Defer network sync so React paints the navigation first
     setTimeout(() => {
       Promise.all([
-        postToSheet(dispatchSale),
+        syncFirestoreAndSheet({ firestoreCollection: 'sales', record: dispatchSale, sheetPayload: dispatchSale }),
         postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
       ])
-        .then(() => refreshFromSheets(true))
+        .then(() => refreshData(true))
         .catch(err => console.error("Error syncing dispatch to Sheets:", err));
     }, 0);
   };
@@ -552,16 +676,17 @@ function MainApp() {
     const fromLoad = getLoad(tfFrom, tfSpice);
     const toLoad = getLoad(tfTo, tfSpice);
     const now = new Date().toISOString();
-    const ts = Date.now();
 
     // Record as sale from source (buyerName = "Transfer → dest")
+    const transferOutTxId = makeTxId('sale', { shop: tfFrom, type: tfSpice, qty, sellPrice: price, buyerName: `Transfer → ${tfTo}`, date: now, loadId: fromLoad.id });
     const transferOut = {
       shop: tfFrom,
       type: tfSpice,
       qty,
       sellPrice: price,
       buyerName: `Transfer → ${tfTo}`,
-      id: ts,
+      id: transferOutTxId,
+      txId: transferOutTxId,
       loadId: fromLoad.id,
       totalValue: qty * price,
       kind: 'sale',
@@ -569,14 +694,17 @@ function MainApp() {
     };
 
     // Record as purchase at destination
+    const transferInTxId = makeTxId('entry', { shop: tfTo, type: tfSpice, qty, price, date: now, loadId: toLoad.id });
     const transferIn = {
       shop: tfTo,
       type: tfSpice,
       qty,
       price,
-      id: ts + 1,
+      id: transferInTxId,
+      txId: transferInTxId,
       loadId: toLoad.id,
       totalValue: qty * price,
+      kind: 'entry',
       date: now,
     };
 
@@ -591,10 +719,10 @@ function MainApp() {
     // Defer network sync so React paints the navigation first
     setTimeout(() => {
       Promise.all([
-        postToSheet(transferOut),
-        postToSheet({ ...transferIn, kind: 'entry' }),
+        syncFirestoreAndSheet({ firestoreCollection: 'sales', record: transferOut, sheetPayload: transferOut }),
+        syncFirestoreAndSheet({ firestoreCollection: 'purchases', record: transferIn, sheetPayload: { ...transferIn, kind: 'entry' } }),
       ])
-        .then(() => refreshFromSheets(true))
+        .then(() => refreshData(true))
         .catch(err => console.error("Error syncing transfer to Sheets:", err));
     }, 0);
   };
@@ -620,6 +748,16 @@ function MainApp() {
           color: '#eab308', fontSize: '0.75rem', fontWeight: 600,
         }}>
           📡 Offline — changes saved locally, will sync when back online
+        </div>
+      )}
+      {pendingSyncCount > 0 && !isOffline && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9997,
+          padding: '0.35rem 1rem', textAlign: 'center',
+          background: 'rgba(59,130,246,0.14)', borderBottom: '1px solid rgba(59,130,246,0.3)',
+          color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600,
+        }}>
+          Sync pending: {pendingSyncCount} transaction{pendingSyncCount > 1 ? 's' : ''}
         </div>
       )}
 
@@ -667,7 +805,9 @@ function MainApp() {
 
       <div className="content-area">
         {activeTab === 'cpanel' && isOwner ? (
-          <CPanel onBack={() => goTo('dashboard')} shops={SHOPS} spices={SPICES} />
+          <Suspense fallback={<div className="page-section"><div className="spinner" /></div>}>
+            <CPanel onBack={() => goTo('dashboard')} shops={SHOPS} spices={SPICES} />
+          </Suspense>
         ) : (
           <>
             {activeTab === 'dashboard' && (
@@ -682,7 +822,7 @@ function MainApp() {
                 onTransfer={isOwner ? openTransferModal : undefined}
                 syncing={syncing}
                 lastSync={lastSync}
-                onRefresh={() => refreshFromSheets()}
+                onRefresh={() => refreshData()}
                 entries={entries}
                 sales={sales}
                 shopLoads={shopLoads}
@@ -2502,6 +2642,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   };
 
   const generatePDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfTools();
     // ── Pre-load logo as base64 ──
     let logoBase64 = null;
     try {
@@ -2820,6 +2961,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
   // ── Overall Report (all shops) ──
   const generateOverallPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfTools();
     let logoBase64 = null;
     try {
       const img = new Image();

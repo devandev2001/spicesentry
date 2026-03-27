@@ -1,13 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // PIN-only app (no Firebase Auth on client). For production, add App Check
-    // and/or move sensitive writes to Cloud Functions.
+    function validShop(shop) {
+      return shop in ['20 Acre', 'Anachal', 'Kallar'];
+    }
+    function validQty(v) { return v is number && v >= 0 && v < 1000000; }
+    function validMoney(v) { return v is number && v >= 0 && v < 1000000000; }
+
     match /users/{userId} {
       allow read, write: if true;
     }
     match /config/{docId} {
       allow read, write: if true;
+    }
+    match /purchases/{txId} {
+      allow read: if true;
+      allow create, update: if
+        request.resource.data.txId == txId
+        && validShop(request.resource.data.shop)
+        && request.resource.data.kind == 'entry'
+        && validQty(request.resource.data.qty)
+        && validMoney(request.resource.data.totalValue);
+    }
+    match /sales/{txId} {
+      allow read: if true;
+      allow create, update: if
+        request.resource.data.txId == txId
+        && validShop(request.resource.data.shop)
+        && request.resource.data.kind == 'sale'
+        && validQty(request.resource.data.qty)
+        && validMoney(request.resource.data.totalValue);
+    }
+    match /daily_summaries/{summaryId} {
+      allow read: if true;
+      allow create, update: if
+        validShop(request.resource.data.shop);
     }
   }
 }

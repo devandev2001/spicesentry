@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "seed": "node scripts/setup.mjs",
+    "backfill:firestore:dry": "node scripts/backfill-sheet-to-firestore.mjs",
+    "backfill:firestore": "node scripts/backfill-sheet-to-firestore.mjs --write",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"

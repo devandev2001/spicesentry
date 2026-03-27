@@ -5,10 +5,11 @@ const PIN_MIN = 4;
 const PIN_MAX = 6;
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, biometricLogin, canUseBiometric, hasBiometricEnrollment } = useAuth();
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [bioSubmitting, setBioSubmitting] = useState(false);
   const [ambiguousCandidates, setAmbiguousCandidates] = useState(null);
   const pinRefs = useRef([]);
   const cardRef = useRef(null);
@@ -114,6 +115,16 @@ export default function LoginPage() {
   };
 
   const canSubmit = pin.length >= PIN_MIN && pin.length <= PIN_MAX && !submitting;
+  const canUseBioButton = canUseBiometric && hasBiometricEnrollment && !submitting && !bioSubmitting;
+
+  const handleBiometric = async () => {
+    if (!canUseBioButton) return;
+    setBioSubmitting(true);
+    setError('');
+    const result = await biometricLogin();
+    if (!result.ok) setError(result.error || 'Biometric verification failed.');
+    setBioSubmitting(false);
+  };
 
   return (
     <div className="login-page">
@@ -202,6 +213,18 @@ export default function LoginPage() {
             <button type="submit" className="login-btn login-btn-pin" disabled={!canSubmit}>
               {submitting ? 'Signing in…' : 'Unlock'}
             </button>
+
+            {canUseBiometric && hasBiometricEnrollment && (
+              <button
+                type="button"
+                className="login-btn login-btn-pin"
+                style={{ background: 'var(--bg-raised)', border: '1px solid var(--rim)', color: 'var(--text-1)', boxShadow: 'none' }}
+                disabled={!canUseBioButton}
+                onClick={handleBiometric}
+              >
+                {bioSubmitting ? 'Verifying…' : 'Use Face/Fingerprint'}
+              </button>
+            )}
 
             {submitting && !ambiguousCandidates && (
               <div className="login-spinner">
