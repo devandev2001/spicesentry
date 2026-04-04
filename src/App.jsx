@@ -1,5 +1,5 @@
-import React, { Suspense, lazy, useMemo, useState, useEffect, useRef } from 'react';
-import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil, Settings, LogOut } from 'lucide-react';
+import React, { Suspense, lazy, useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil, Settings, LogOut, Menu, X } from 'lucide-react';
 import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'date-fns';
 import { useAuth } from './AuthContext';
 import { db, collection, doc, getDocs, setDoc, query, where, orderBy, limit, increment } from './firebase';
@@ -350,7 +350,8 @@ function MainApp() {
     const remainingValue = totalValue - soldValue;
     const avgBuyPrice = remainingQty > 0 ? +(remainingValue / remainingQty).toFixed(2) : originalAvgBuy;
 
-    const profitPerKg  = avgSellPrice !== null ? +(avgSellPrice - originalAvgBuy).toFixed(2) : null;
+    const profitPerKg  = avgSellPrice !== null && originalAvgBuy > 0 ? +(avgSellPrice - originalAvgBuy).toFixed(2) : null;
+    const totalProfit   = profitPerKg !== null && soldQty > 0 ? +(profitPerKg * soldQty).toFixed(2) : null;
 
     return {
       ...spice,
@@ -362,6 +363,8 @@ function MainApp() {
       avgBuyPrice,                        // cost-relief adjusted avg
       avgSellPrice,
       profitPerKg,
+      totalProfit,
+      totalSoldValue: +soldValue.toFixed(2),
       remainingValue: remainingQty > 0 ? +remainingValue.toFixed(2) : 0,
       totalBuyValue: +totalValue.toFixed(2),
     };
@@ -551,6 +554,7 @@ function MainApp() {
   // Dispatch modal state
   const [dispatchModal, setDispatchModal] = useState(null); // { spiceId, spiceLabel, remainingQty, loadId }
   const [dispatchPrice, setDispatchPrice] = useState('');
+  const [dispatching, setDispatching] = useState(false); // guard against double-clicks
 
   const handleDispatchLoad = async (spiceId) => {
     const spiceLabel = SPICES.find(s => s.id === spiceId)?.label || spiceId;
@@ -582,9 +586,11 @@ function MainApp() {
   };
 
   const confirmDispatch = async () => {
-    if (!dispatchModal) return;
+    if (!dispatchModal || dispatching) return;
     const sellPrice = parseFloat(dispatchPrice);
     if (isNaN(sellPrice) || sellPrice <= 0) return;
+
+    setDispatching(true); // prevent double-clicks
 
     const { spiceId, remainingQty, loadId } = dispatchModal;
 
@@ -625,7 +631,8 @@ function MainApp() {
         postToSheet({ kind: 'load', shop: selectedShop, spice: spiceId, loadId: newLoadId, start: newLoadStart }),
       ])
         .then(() => refreshData(true))
-        .catch(err => console.error("Error syncing dispatch to Sheets:", err));
+        .catch(err => console.error("Error syncing dispatch to Sheets:", err))
+        .finally(() => setDispatching(false));
     }, 0);
   };
 
@@ -736,6 +743,10 @@ function MainApp() {
         .catch(err => console.error("Error syncing transfer to Sheets:", err));
     }, 0);
   };
+
+  // ── Burger menu state ──
+  const [burgerOpen, setBurgerOpen] = useState(false);
+  const burgerGoTo = (tab) => { setBurgerOpen(false); goTo(tab); };
 
   return (
     <>
@@ -889,7 +900,7 @@ function MainApp() {
         </div>
         <button type="button" aria-label="Dashboard" title="Dashboard" className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => goTo('dashboard')}>
           <Home />
-          <span className="nav-item-label">Dashboard</span>
+          <span className="nav-item-label">Home</span>
         </button>
         <button type="button" aria-label="Buy" title="Buy" className={`nav-item ${activeTab === 'add' ? 'active' : ''}`} onClick={() => goTo('add')}>
           <PlusCircle />
@@ -899,33 +910,61 @@ function MainApp() {
           <ShoppingBag />
           <span className="nav-item-label">Sell</span>
         </button>
-        <button type="button" aria-label="Settings" title="Settings" className={`nav-item ${activeTab === 'mysettings' ? 'active' : ''}`} onClick={() => goTo('mysettings')}>
-          <Settings />
-          <span className="nav-item-label">Settings</span>
-        </button>
-        {isOwner && (
-          <button type="button" aria-label="Daily" title="Daily" className={`nav-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => goTo('daily')}>
-            <CalendarDays />
-            <span className="nav-item-label">Daily</span>
-          </button>
-        )}
-        {isOwner && (
-          <button type="button" aria-label="History" title="History" className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => goTo('history')}>
-            <Clock />
-            <span className="nav-item-label">History</span>
-          </button>
-        )}
-        {isOwner && (
-          <button type="button" aria-label="Control panel" title="CPanel" className={`nav-item ${activeTab === 'cpanel' ? 'active' : ''}`} onClick={() => goTo('cpanel')}>
-            <BarChart3 />
-            <span className="nav-item-label">CPanel</span>
-          </button>
-        )}
-        <button type="button" aria-label="Log out" title="Logout" className="nav-item nav-logout" onClick={logout}>
-          <LogOut />
-          <span className="nav-item-label">Logout</span>
+        <button type="button" aria-label="More" title="More" className={`nav-item ${burgerOpen || ['mysettings','daily','history','cpanel'].includes(activeTab) ? 'active' : ''}`} onClick={() => setBurgerOpen(v => !v)}>
+          <Menu />
+          <span className="nav-item-label">More</span>
         </button>
       </nav>
+
+      {/* ── Burger / More Menu Overlay ── */}
+      {burgerOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9998,
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          animation: 'fadeIn 0.15s ease',
+        }} onClick={() => setBurgerOpen(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            position: 'absolute', bottom: 'calc(max(0.5rem, env(safe-area-inset-bottom, 0px)) + 64px)',
+            left: 'max(0.5rem, env(safe-area-inset-left, 0px))',
+            right: 'max(0.5rem, env(safe-area-inset-right, 0px))',
+            background: 'rgba(20, 16, 10, 0.98)',
+            backdropFilter: 'blur(32px)',
+            border: '1px solid rgba(255, 200, 100, 0.15)',
+            borderRadius: 16,
+            padding: '0.5rem',
+            boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
+            animation: 'slideUp 0.2s ease',
+          }}>
+            <button type="button" className={`burger-item ${activeTab === 'mysettings' ? 'active' : ''}`} onClick={() => burgerGoTo('mysettings')}>
+              <Settings size={20} />
+              <span>Settings</span>
+            </button>
+            {isOwner && (
+              <button type="button" className={`burger-item ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => burgerGoTo('daily')}>
+                <CalendarDays size={20} />
+                <span>Daily Summary</span>
+              </button>
+            )}
+            {isOwner && (
+              <button type="button" className={`burger-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => burgerGoTo('history')}>
+                <Clock size={20} />
+                <span>History & Reports</span>
+              </button>
+            )}
+            {isOwner && (
+              <button type="button" className={`burger-item ${activeTab === 'cpanel' ? 'active' : ''}`} onClick={() => burgerGoTo('cpanel')}>
+                <BarChart3 size={20} />
+                <span>Control Panel</span>
+              </button>
+            )}
+            <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '0.25rem 0.5rem' }} />
+            <button type="button" className="burger-item danger" onClick={() => { setBurgerOpen(false); logout(); }}>
+              <LogOut size={20} />
+              <span>Log Out</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
@@ -967,7 +1006,7 @@ function MainApp() {
               borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1.25rem',
             }}>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Dispatching Quantity</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--primary-accent)' }}>
+              <div style={{ fontSize: 'clamp(1.1rem, 4.5vw, 1.4rem)', fontWeight: 700, color: 'var(--primary-accent)' }}>
                 {dispatchModal.remainingQty.toFixed(2)} <span style={{ fontSize: '0.75rem', fontWeight: 400 }}>Kg</span>
               </div>
             </div>
@@ -1020,20 +1059,20 @@ function MainApp() {
               </button>
               <button
                 onClick={confirmDispatch}
-                disabled={!dispatchPrice || parseFloat(dispatchPrice) <= 0}
+                disabled={!dispatchPrice || parseFloat(dispatchPrice) <= 0 || dispatching}
                 style={{
                   flex: 1, padding: '0.7rem',
                   borderRadius: 10, border: 'none',
-                  background: (!dispatchPrice || parseFloat(dispatchPrice) <= 0) ? 'rgba(248,113,113,0.3)' : 'var(--danger)',
+                  background: (!dispatchPrice || parseFloat(dispatchPrice) <= 0 || dispatching) ? 'rgba(248,113,113,0.3)' : 'var(--danger)',
                   color: '#fff',
                   fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
-                  opacity: (!dispatchPrice || parseFloat(dispatchPrice) <= 0) ? 0.5 : 1,
+                  opacity: (!dispatchPrice || parseFloat(dispatchPrice) <= 0 || dispatching) ? 0.5 : 1,
                   transition: 'all 0.15s ease',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
                 }}
               >
                 <Truck size={16} />
-                Dispatch
+                {dispatching ? 'Dispatching…' : 'Dispatch'}
               </button>
             </div>
           </div>
@@ -1103,13 +1142,13 @@ function MainApp() {
             }}>
               <div>
                 <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Available at {tfFrom}</div>
-                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary-accent)' }}>
+                <div style={{ fontSize: 'clamp(0.9rem, 3.5vw, 1.1rem)', fontWeight: 700, color: 'var(--primary-accent)' }}>
                   {tfAvailableQty.toFixed(2)} <span style={{ fontSize: '0.7rem', fontWeight: 400 }}>Kg</span>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Avg Buy Price</div>
-                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{formatINR(tfAvgPrice)}/Kg</div>
+                <div style={{ fontSize: 'clamp(0.82rem, 3vw, 1rem)', fontWeight: 700, color: 'var(--text-primary)' }}>{formatINR(tfAvgPrice)}/Kg</div>
               </div>
             </div>
 
@@ -1297,7 +1336,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
   // Compute hero totals
   const totalInventoryValue = stats.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
   const totalPnL = stats.reduce((s, sp) => {
-    if (sp.profitPerKg !== null && sp.soldQty > 0) return s + sp.profitPerKg * sp.soldQty;
+    if (sp.totalProfit !== null) return s + sp.totalProfit;
     return s;
   }, 0);
 
@@ -1351,7 +1390,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
             Total Inventory Value
           </p>
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '2.2rem', fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.04em', lineHeight: 1, fontFamily: "'DM Mono', monospace" }}>
+            <span style={{ fontSize: 'clamp(1.6rem, 6vw, 2.2rem)', fontWeight: 700, color: 'var(--text-1)', letterSpacing: '-0.04em', lineHeight: 1, fontFamily: "'DM Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
               {formatINR(totalInventoryValue)}
             </span>
             {totalPnL !== 0 && (
@@ -1392,7 +1431,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                   background: 'var(--bg-card)',
                 }}>
                   <p style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-2)', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{spice.label}</p>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color, letterSpacing: '-0.02em', fontFamily: "'DM Mono', monospace" }}>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: spice.color, letterSpacing: '-0.02em', fontFamily: "'DM Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {formatINR(spice.avgPrice)} <span style={{ fontSize: '0.6rem', fontWeight: 400, opacity: 0.6 }}>/Kg</span>
                   </div>
                   <p style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-1)', margin: '0.35rem 0 0.3rem', fontFamily: "'DM Mono', monospace" }}>
@@ -1449,7 +1488,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
 
                 <div className="spice-card-footer">
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
-                    <span className="spice-avg-price">Buy: {formatINR(spice.avgBuyPrice)}/kg</span>
+                    <span className="spice-avg-price">Buy: {formatINR(spice.originalAvgBuy)}/kg</span>
                     {spice.avgSellPrice !== null && (
                       <span className="spice-avg-price" style={{ color: 'var(--primary-ctn)' }}>Sell: {formatINR(spice.avgSellPrice)}/kg</span>
                     )}
@@ -1460,6 +1499,32 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                     </button>
                   )}
                 </div>
+
+                {/* ── Separate Profit Section ── */}
+                {spice.totalProfit !== null && spice.soldQty > 0 && (
+                  <div style={{
+                    marginTop: '0.5rem', padding: '0.5rem 0.65rem',
+                    borderRadius: 8,
+                    background: spice.totalProfit >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(248,113,113,0.08)',
+                    border: `1px solid ${spice.totalProfit >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(248,113,113,0.2)'}`,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Profit on {spice.soldQty.toFixed(2)} kg sold</div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>
+                        {formatINR(spice.profitPerKg)}/kg × {spice.soldQty.toFixed(2)} kg
+                      </div>
+                    </div>
+                    <div style={{
+                      fontSize: 'clamp(0.85rem, 3.5vw, 1rem)', fontWeight: 800,
+                      color: spice.totalProfit >= 0 ? '#10b981' : '#f87171',
+                      fontFamily: "'DM Mono', monospace",
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {spice.totalProfit >= 0 ? '+' : ''}{formatINR(spice.totalProfit)}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -2076,6 +2141,35 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
   const grandTotalSellValue = filteredSales.reduce((sum, s) => sum + Number(s.qty) * Number(s.sellPrice), 0);
   const grandAvgBuyPrice = grandTotalBuyQty > 0 ? +(grandTotalBuyValue / grandTotalBuyQty).toFixed(2) : 0;
 
+  // COGS-based Net P&L: for each spice sold in the filtered period,
+  // use the all-time weighted avg buy price for that shop as the cost basis.
+  // Profit = Sale Revenue − (Avg Buy Price × Qty Sold)  — only counts goods actually sold
+  const grandNetPnL = (() => {
+    const relevantShops = viewMode === 'all' ? shops : [selectedShop];
+    let totalRevenue = 0;
+    let totalCOGS = 0;
+    spices.forEach(spice => {
+      relevantShops.forEach(shop => {
+        // All-time weighted avg buy price for this shop+spice (not date-filtered)
+        const allBuys = entries.filter(e => e.shop === shop && e.type === spice.id);
+        const allBuyQty = allBuys.reduce((s, e) => s + Number(e.qty), 0);
+        const allBuyVal = allBuys.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        const avgBuy = allBuyQty > 0 ? allBuyVal / allBuyQty : 0;
+
+        // Sales in the filtered period for this shop+spice
+        const periodSales = filteredSales.filter(s => s.shop === shop && s.type === spice.id);
+        const soldQty = periodSales.reduce((s, e) => s + Number(e.qty), 0);
+        const soldRev = periodSales.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+
+        if (soldQty > 0 && avgBuy > 0) {
+          totalRevenue += soldRev;
+          totalCOGS += avgBuy * soldQty;
+        }
+      });
+    });
+    return totalRevenue - totalCOGS;
+  })();
+
   // ── Monthly Comparison — this month vs last month ──
   const [showMonthlyComparison, setShowMonthlyComparison] = useState(false);
 
@@ -2250,35 +2344,38 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
             Period Totals — {allDates.length} day{allDates.length !== 1 ? 's' : ''}
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-            <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(59,130,246,0.15)' }}>
+            <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(59,130,246,0.15)', minWidth: 0, overflow: 'hidden' }}>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Purchased</div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#58a6ff' }}>{grandTotalBuyQty.toFixed(2)} Kg</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{formatINR(grandTotalBuyValue)}</div>
+              <div style={{ fontSize: 'clamp(0.82rem, 3vw, 1.05rem)', fontWeight: 800, color: '#58a6ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{grandTotalBuyQty.toFixed(2)} Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatINR(grandTotalBuyValue)}</div>
             </div>
-            <div style={{ background: 'rgba(76,175,80,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(76,175,80,0.15)' }}>
+            <div style={{ background: 'rgba(76,175,80,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(76,175,80,0.15)', minWidth: 0, overflow: 'hidden' }}>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Avg Buy Price</div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#4caf50' }}>{formatINR(grandAvgBuyPrice)}</div>
+              <div style={{ fontSize: 'clamp(0.82rem, 3vw, 1.05rem)', fontWeight: 800, color: '#4caf50', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatINR(grandAvgBuyPrice)}</div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>per Kg</div>
             </div>
             {grandTotalSellQty > 0 && (
               <>
-                <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(16,185,129,0.15)' }}>
+                <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(16,185,129,0.15)', minWidth: 0, overflow: 'hidden' }}>
                   <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Sold</div>
-                  <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#10b981' }}>{grandTotalSellQty.toFixed(2)} Kg</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{formatINR(grandTotalSellValue)}</div>
+                  <div style={{ fontSize: 'clamp(0.82rem, 3vw, 1.05rem)', fontWeight: 800, color: '#10b981', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{grandTotalSellQty.toFixed(2)} Kg</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatINR(grandTotalSellValue)}</div>
                 </div>
                 <div style={{
-                  background: grandTotalSellValue - grandTotalBuyValue >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                  background: grandNetPnL >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
                   borderRadius: 10, padding: '0.6rem 0.75rem',
-                  border: `1px solid ${grandTotalSellValue - grandTotalBuyValue >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                  border: `1px solid ${grandNetPnL >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                  minWidth: 0, overflow: 'hidden',
                 }}>
                   <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>Net P&L</div>
                   <div style={{
-                    fontSize: '1.05rem', fontWeight: 800,
-                    color: grandTotalSellValue - grandTotalBuyValue >= 0 ? '#10b981' : '#f87171',
+                    fontSize: 'clamp(0.82rem, 3vw, 1.05rem)', fontWeight: 800,
+                    color: grandNetPnL >= 0 ? '#10b981' : '#f87171',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
-                    {grandTotalSellValue - grandTotalBuyValue >= 0 ? '+' : ''}{formatINR(grandTotalSellValue - grandTotalBuyValue)}
+                    {grandNetPnL >= 0 ? '+' : ''}{formatINR(grandNetPnL)}
                   </div>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>on {grandTotalSellQty.toFixed(2)} Kg sold</div>
                 </div>
               </>
             )}
@@ -2297,10 +2394,10 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
                   <div key={spice.id} style={{
                     background: `${spice.color}15`, border: `1px solid ${spice.color}30`,
                     borderRadius: 8, padding: '0.3rem 0.6rem',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 72,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 68, overflow: 'hidden',
                   }}>
                     <span style={{ fontSize: '0.6rem', color: spice.color, fontWeight: 700 }}>{spice.label}</span>
-                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>{formatINR((val / qty).toFixed(2))}</span>
+                    <span style={{ fontSize: 'clamp(0.72rem, 2.5vw, 0.85rem)', fontWeight: 800, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{formatINR((val / qty).toFixed(2))}</span>
                     <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>{qty.toFixed(2)} Kg</span>
                   </div>
                 );
@@ -2339,23 +2436,23 @@ function DailyPurchases({ entries, sales, shops, spices, selectedShop, onSelectS
           {/* Side-by-side totals */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
             {/* This month */}
-            <div style={{ background: 'rgba(168,85,247,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(168,85,247,0.15)' }}>
+            <div style={{ background: 'rgba(168,85,247,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(168,85,247,0.15)', minWidth: 0, overflow: 'hidden' }}>
               <div style={{ fontSize: '0.6rem', color: '#a855f7', fontWeight: 700, marginBottom: '0.25rem' }}>
                 {format(thisMonthStart, 'MMM yyyy')}
               </div>
-              <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{thisMonth.totalBuyQty.toFixed(1)} Kg</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{formatINR(thisMonth.totalBuyValue)}</div>
-              <div style={{ fontSize: '0.7rem', color: '#a855f7', fontWeight: 600, marginTop: '0.15rem' }}>Avg {formatINR(thisMonth.avgBuyPrice)}/Kg</div>
+              <div style={{ fontSize: 'clamp(0.82rem, 3vw, 1rem)', fontWeight: 800, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{thisMonth.totalBuyQty.toFixed(1)} Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatINR(thisMonth.totalBuyValue)}</div>
+              <div style={{ fontSize: '0.7rem', color: '#a855f7', fontWeight: 600, marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Avg {formatINR(thisMonth.avgBuyPrice)}/Kg</div>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{thisMonth.entryCount} entries</div>
             </div>
             {/* Last month */}
-            <div style={{ background: 'rgba(100,116,139,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(100,116,139,0.15)' }}>
+            <div style={{ background: 'rgba(100,116,139,0.08)', borderRadius: 10, padding: '0.6rem 0.75rem', border: '1px solid rgba(100,116,139,0.15)', minWidth: 0, overflow: 'hidden' }}>
               <div style={{ fontSize: '0.6rem', color: '#94a3b8', fontWeight: 700, marginBottom: '0.25rem' }}>
                 {format(lastMonthStart, 'MMM yyyy')}
               </div>
-              <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{lastMonth.totalBuyQty.toFixed(1)} Kg</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{formatINR(lastMonth.totalBuyValue)}</div>
-              <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600, marginTop: '0.15rem' }}>Avg {formatINR(lastMonth.avgBuyPrice)}/Kg</div>
+              <div style={{ fontSize: 'clamp(0.82rem, 3vw, 1rem)', fontWeight: 800, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMonth.totalBuyQty.toFixed(1)} Kg</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formatINR(lastMonth.totalBuyValue)}</div>
+              <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600, marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Avg {formatINR(lastMonth.avgBuyPrice)}/Kg</div>
               <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>{lastMonth.entryCount} entries</div>
             </div>
           </div>
@@ -2723,20 +2820,22 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       const remainingValue = totalBuyValue - soldValue;
       const avgBuy = remainingQty > 0 ? (remainingValue / remainingQty).toFixed(2) : (totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00');
       const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
-      const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty) : null;
-      return { label: spice.label, color: spice.color, totalQty, avgBuy, soldQty, avgSell, remainingQty, remainingValue, profit };
+      const originalAvgBuy = totalQty > 0 ? (totalBuyValue / totalQty) : 0;
+      const profit = soldQty > 0 && originalAvgBuy > 0 ? (soldValue - originalAvgBuy * soldQty) : null;
+      return { label: spice.label, color: spice.color, totalQty, totalBuyValue, avgBuy, soldQty, soldValue, avgSell, remainingQty, remainingValue, profit, originalAvgBuy };
     }).filter(r => r.totalQty > 0 || r.soldQty > 0);
 
     const totals = spices.reduce((acc, spice) => {
-      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
-      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
+      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id && dateFilter(e));
+      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id && dateFilter(s));
       acc.totalBuyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
       acc.totalSellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
       acc.totalBought += se.reduce((s, e) => s + Number(e.qty), 0);
       acc.totalSold += ss.reduce((s, e) => s + Number(e.qty), 0);
       return acc;
     }, { totalBought: 0, totalBuyValue: 0, totalSold: 0, totalSellValue: 0 });
-    const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
+    const costOfGoodsSold = totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0;
+    const totalProfit = totals.totalSellValue - costOfGoodsSold;
 
     const purchases = entries.filter(e => e.shop === selectedShop && dateFilter(e)).sort((a, b) => new Date(b.date) - new Date(a.date));
     const shopSales = sales.filter(s => s.shop === selectedShop && dateFilter(s)).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -2757,8 +2856,9 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         const remainingValue = totalBuyValue - soldValue;
         const avgBuy = totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00';
         const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
-        const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty) : null;
-        return { label: spice.label, color: spice.color, totalQty, avgBuy, soldQty, avgSell, remainingQty, remainingValue, profit };
+        const originalAvgBuy = totalQty > 0 ? (totalBuyValue / totalQty) : 0;
+        const profit = soldQty > 0 && originalAvgBuy > 0 ? (soldValue - originalAvgBuy * soldQty) : null;
+        return { label: spice.label, color: spice.color, totalQty, totalBuyValue, avgBuy, soldQty, soldValue, avgSell, remainingQty, remainingValue, profit, originalAvgBuy };
       }).filter(r => r.totalQty > 0 || r.soldQty > 0);
 
       const totals = spices.reduce((acc, spice) => {
@@ -2770,7 +2870,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         acc.totalSold += ss.reduce((s, e) => s + Number(e.qty), 0);
         return acc;
       }, { totalBought: 0, totalBuyValue: 0, totalSold: 0, totalSellValue: 0 });
-      const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
+      const costOfGoodsSold = totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0;
+      const totalProfit = totals.totalSellValue - costOfGoodsSold;
 
       return { shop, summary: shopSummary, totals: { ...totals, totalProfit } };
     }).filter(d => d.summary.length > 0);
@@ -2780,6 +2881,350 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const viewReport = (type) => {
     if (type === 'shop') setPdfPages({ type: 'shop', ...buildShopReportData() });
     else setPdfPages({ type: 'overall', ...buildOverallReportData() });
+  };
+
+  // ── Filtered PDF — respects dateFrom, dateTo and filterType ──
+  const generateFilteredPDF = async () => {
+    const { jsPDF, autoTable } = await loadPdfTools();
+    let logoBase64 = null;
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = '/kvs-logo.png';
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      logoBase64 = canvas.toDataURL('image/png');
+    } catch (e) { /* skip */ }
+
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    let y = 12;
+
+    const dark = [13, 17, 23];
+    const cardBg = [22, 27, 34];
+    const accent = [88, 166, 255];
+    const brandGreen = [76, 175, 80];
+    const green = [16, 185, 129];
+    const red = [248, 113, 113];
+    const grey = [140, 150, 165];
+    const white = [255, 255, 255];
+    const lightGrey = [210, 215, 225];
+    const R = (val) => formatINR(val).replace('₹', 'Rs.');
+
+    const drawPageBg = () => { doc.setFillColor(...dark); doc.rect(0, 0, pageW, pageH, 'F'); };
+    const drawTopStripe = () => { doc.setFillColor(...brandGreen); doc.rect(0, 0, pageW, 3, 'F'); };
+    const paintedPages = new Set([1]);
+    const drawNewPageBg = () => {
+      const pg = doc.internal.getCurrentPageInfo().pageNumber;
+      if (!paintedPages.has(pg)) { paintedPages.add(pg); drawPageBg(); drawTopStripe(); }
+    };
+    const addNewPage = () => {
+      doc.addPage();
+      const pg = doc.internal.getCurrentPageInfo().pageNumber;
+      paintedPages.add(pg); drawPageBg(); drawTopStripe();
+      return 12;
+    };
+    const sectionTitle = (title, startY, color = accent) => {
+      doc.setFillColor(...color);
+      doc.rect(margin, startY, 3, 10, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(...white);
+      doc.text(title, margin + 7, startY + 7);
+      return startY + 14;
+    };
+
+    // Date filter
+    const dFilter = (item) => {
+      if (dateFrom) { const from = new Date(dateFrom); from.setHours(0,0,0,0); if (new Date(item.date) < from) return false; }
+      if (dateTo) { const to = new Date(dateTo); to.setHours(23,59,59,999); if (new Date(item.date) > to) return false; }
+      return true;
+    };
+
+    const filtPurchases = entries.filter(e => e.shop === selectedShop && dFilter(e)).sort((a, b) => new Date(b.date) - new Date(a.date));
+    const filtSales = sales.filter(s => s.shop === selectedShop && dFilter(s)).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Build date range label
+    const rangeLabel = (dateFrom || dateTo)
+      ? `${dateFrom ? format(new Date(dateFrom), 'dd MMM yyyy') : 'Start'} — ${dateTo ? format(new Date(dateTo), 'dd MMM yyyy') : 'Today'}`
+      : 'All Time';
+    const typeLabel = filterType === 'purchase' ? ' (Purchases Only)' : filterType === 'sale' ? ' (Sales Only)' : '';
+
+    // ── Page 1 BG ──
+    drawPageBg();
+    drawTopStripe();
+
+    // ── Header ──
+    doc.setFillColor(...cardBg);
+    doc.roundedRect(margin, y + 4, pageW - margin * 2, 34, 5, 5, 'F');
+    if (logoBase64) { try { doc.addImage(logoBase64, 'PNG', margin + 5, y + 8, 22, 22); } catch (e) {} }
+    const lOff = logoBase64 ? 31 : 6;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...brandGreen);
+    doc.text('KVS Spices & Traders', margin + lOff, y + 16);
+    doc.setFontSize(9); doc.setTextColor(...grey);
+    doc.text(`${selectedShop} — Filtered Report${typeLabel}`, margin + lOff, y + 24);
+    doc.setFontSize(8);
+    doc.text(rangeLabel, margin + lOff, y + 31);
+    doc.setFontSize(7); doc.setTextColor(...grey);
+    doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy, h:mm a')}`, pageW - margin - 5, y + 16, { align: 'right' });
+    y += 44;
+
+    doc.setDrawColor(40, 50, 65); doc.setLineWidth(0.3);
+    doc.line(margin, y, pageW - margin, y); y += 6;
+
+    // ── Per-Spice P&L Summary ──
+    y = sectionTitle('Spice-wise P&L Summary', y);
+
+    const spicePnL = spices.map(spice => {
+      const se = filtPurchases.filter(e => e.type === spice.id);
+      const ss = filtSales.filter(s => s.type === spice.id);
+      const buyQty = se.reduce((s, e) => s + Number(e.qty), 0);
+      const buyVal = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      const sellQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+      const sellVal = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      const avgBuy = buyQty > 0 ? (buyVal / buyQty) : 0;
+      const avgSell = sellQty > 0 ? (sellVal / sellQty) : 0;
+      const cogs = avgBuy * sellQty;
+      const profit = sellQty > 0 && avgBuy > 0 ? (sellVal - cogs) : null;
+      const remQty = Math.max(0, buyQty - sellQty);
+      const remVal = buyVal - sellVal;
+      return { label: spice.label, buyQty, buyVal, sellQty, sellVal, avgBuy, avgSell, cogs, profit, remQty, remVal };
+    }).filter(r => r.buyQty > 0 || r.sellQty > 0);
+
+    if (spicePnL.length > 0) {
+      const pnlRows = spicePnL.map(p => [
+        p.label,
+        p.buyQty.toFixed(2),
+        p.avgBuy > 0 ? R(p.avgBuy.toFixed(2)) : '-',
+        R(p.buyVal.toFixed(0)),
+        p.sellQty.toFixed(2),
+        p.avgSell > 0 ? R(p.avgSell.toFixed(2)) : '-',
+        R(p.sellVal.toFixed(0)),
+        p.remQty.toFixed(2),
+        p.profit !== null ? p.profit.toFixed(0) : '-',
+      ]);
+      // Totals row
+      const tBuyQty = spicePnL.reduce((s, p) => s + p.buyQty, 0);
+      const tBuyVal = spicePnL.reduce((s, p) => s + p.buyVal, 0);
+      const tSellQty = spicePnL.reduce((s, p) => s + p.sellQty, 0);
+      const tSellVal = spicePnL.reduce((s, p) => s + p.sellVal, 0);
+      const tCogs = spicePnL.reduce((s, p) => s + (p.cogs || 0), 0);
+      const tProfit = tSellVal - tCogs;
+      const tRemQty = Math.max(0, tBuyQty - tSellQty);
+      pnlRows.push([
+        'TOTAL',
+        tBuyQty.toFixed(2),
+        tBuyQty > 0 ? R((tBuyVal / tBuyQty).toFixed(2)) : '-',
+        R(tBuyVal.toFixed(0)),
+        tSellQty.toFixed(2),
+        tSellQty > 0 ? R((tSellVal / tSellQty).toFixed(2)) : '-',
+        R(tSellVal.toFixed(0)),
+        tRemQty.toFixed(2),
+        tProfit.toFixed(0),
+      ]);
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Spice', 'Buy Qty', 'Avg Buy', 'Buy Value', 'Sell Qty', 'Avg Sell', 'Sell Value', 'Balance', 'Profit']],
+        body: pnlRows,
+        theme: 'plain',
+        styles: { font: 'helvetica', fontSize: 7, textColor: lightGrey, cellPadding: { top: 3, bottom: 3, left: 2.5, right: 2.5 }, lineWidth: 0 },
+        headStyles: { fillColor: [30, 38, 50], textColor: brandGreen, fontStyle: 'bold', fontSize: 6.5, cellPadding: { top: 3.5, bottom: 3.5, left: 2.5, right: 2.5 } },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: {
+          0: { fontStyle: 'bold', textColor: white },
+          1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' },
+          4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right', fontStyle: 'bold' },
+          7: { halign: 'right' }, 8: { halign: 'right', fontStyle: 'bold' },
+        },
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
+        didDrawCell: (data) => {
+          // Bold total row
+          if (data.section === 'body' && data.row.index === pnlRows.length - 1) {
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.textColor = white;
+          }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body') {
+            // Color profit column
+            if (data.column.index === 8) {
+              const v = data.cell.raw;
+              if (v && v !== '-') {
+                const num = parseFloat(v);
+                data.cell.styles.textColor = num >= 0 ? green : red;
+                data.cell.text = [`${num >= 0 ? '+' : ''}${R(num)}`];
+              }
+            }
+            // Bold the total row
+            if (data.row.index === pnlRows.length - 1) {
+              data.cell.styles.fontStyle = 'bold';
+              if (data.column.index === 0) data.cell.styles.textColor = brandGreen;
+            }
+          }
+        },
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    // ── Grand Totals Card ──
+    const tBuyVal = spicePnL.reduce((s, p) => s + p.buyVal, 0);
+    const tSellVal = spicePnL.reduce((s, p) => s + p.sellVal, 0);
+    const tCogs = spicePnL.reduce((s, p) => s + (p.cogs || 0), 0);
+    const tProfit = tSellVal - tCogs;
+    const tRemVal = tBuyVal - tSellVal;
+
+    if (y > pageH - 40) { y = addNewPage(); }
+
+    doc.setFillColor(18, 24, 33);
+    doc.roundedRect(margin, y, pageW - margin * 2, 26, 4, 4, 'F');
+    doc.setFillColor(...brandGreen);
+    doc.rect(margin, y, pageW - margin * 2, 1.5, 'F');
+
+    const colW = (pageW - margin * 2) / 4;
+    const tLabels = ['Total Invested', 'Total Revenue', 'Remaining Value', 'Net Profit'];
+    const tValues = [R(tBuyVal), R(tSellVal), R(tRemVal), `${tProfit >= 0 ? '+' : ''}${R(tProfit)}`];
+    const tColors = [white, accent, white, tProfit >= 0 ? green : red];
+    tLabels.forEach((label, i) => {
+      const x = margin + colW * i + 6;
+      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(...grey);
+      doc.text(label, x, y + 9);
+      doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...tColors[i]);
+      doc.text(tValues[i], x, y + 19);
+    });
+    y += 34;
+
+    // ── Purchase Records (if not filtered to sales only) ──
+    if (filterType !== 'sale' && filtPurchases.length > 0) {
+      if (y > pageH - 50) { y = addNewPage(); }
+      y = sectionTitle(`Purchase Records (${filtPurchases.length})`, y);
+
+      const purchaseRows = filtPurchases.map(e => [
+        format(new Date(e.date), 'dd MMM yy'),
+        e.type.replace('_', ' '),
+        `${Number(e.qty).toFixed(2)} Kg`,
+        R(Number(e.price)),
+        R(Number(e.qty) * Number(e.price)),
+      ]);
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Date', 'Spice', 'Qty', 'Price/Kg', 'Total']],
+        body: purchaseRows,
+        theme: 'plain',
+        styles: { font: 'helvetica', fontSize: 8, textColor: lightGrey, cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 } },
+        headStyles: { fillColor: [30, 38, 50], textColor: brandGreen, fontStyle: 'bold', fontSize: 7.5 },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold', textColor: white } },
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // ── Sale Records (if not filtered to purchases only) ──
+    if (filterType !== 'purchase' && filtSales.length > 0) {
+      if (y > pageH - 50) { y = addNewPage(); }
+      y = sectionTitle(`Sale Records (${filtSales.length})`, y, green);
+
+      const saleRows = filtSales.map(s => [
+        format(new Date(s.date), 'dd MMM yy'),
+        s.type.replace('_', ' '),
+        `${Number(s.qty).toFixed(2)} Kg`,
+        R(Number(s.sellPrice)),
+        R(Number(s.qty) * Number(s.sellPrice)),
+        s.buyerName || '-',
+      ]);
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Date', 'Spice', 'Qty', 'Sell/Kg', 'Total', 'Buyer']],
+        body: saleRows,
+        theme: 'plain',
+        styles: { font: 'helvetica', fontSize: 8, textColor: lightGrey, cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 } },
+        headStyles: { fillColor: [30, 38, 50], textColor: green, fontStyle: 'bold', fontSize: 7.5 },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold', textColor: green } },
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // ── Per-Spice Profit Breakdown ──
+    const profitSpices = spicePnL.filter(p => p.profit !== null && p.sellQty > 0);
+    if (profitSpices.length > 0) {
+      if (y > pageH - 50) { y = addNewPage(); }
+      y = sectionTitle('Detailed Profit Breakdown', y, green);
+
+      const profitRows = profitSpices.map(p => {
+        const profitPerKg = p.avgSell - p.avgBuy;
+        return [
+          p.label,
+          `${p.sellQty.toFixed(2)} Kg`,
+          R(p.avgBuy.toFixed(2)),
+          R(p.avgSell.toFixed(2)),
+          `${profitPerKg >= 0 ? '+' : ''}${R(profitPerKg.toFixed(2))}`,
+          R(p.sellVal.toFixed(0)),
+          R(p.cogs.toFixed(0)),
+          p.profit.toFixed(0),
+        ];
+      });
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Spice', 'Sold', 'Avg Buy', 'Avg Sell', 'Margin/Kg', 'Revenue', 'COGS', 'Profit']],
+        body: profitRows,
+        theme: 'plain',
+        styles: { font: 'helvetica', fontSize: 7.5, textColor: lightGrey, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, lineWidth: 0 },
+        headStyles: { fillColor: [30, 38, 50], textColor: green, fontStyle: 'bold', fontSize: 7 },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: {
+          0: { fontStyle: 'bold', textColor: white },
+          1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' },
+          4: { halign: 'right', fontStyle: 'bold' }, 5: { halign: 'right' }, 6: { halign: 'right' },
+          7: { halign: 'right', fontStyle: 'bold' },
+        },
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
+        didParseCell: (data) => {
+          if (data.section === 'body') {
+            if (data.column.index === 4) {
+              const raw = data.cell.raw;
+              data.cell.styles.textColor = raw.startsWith('+') ? green : red;
+            }
+            if (data.column.index === 7) {
+              const num = parseFloat(data.cell.raw);
+              data.cell.styles.textColor = num >= 0 ? green : red;
+              data.cell.text = [`${num >= 0 ? '+' : ''}${R(num)}`];
+            }
+          }
+        },
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // ── Footer ──
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFillColor(18, 22, 28); doc.rect(0, pageH - 10, pageW, 10, 'F');
+      doc.setFillColor(...brandGreen); doc.rect(0, pageH - 10, pageW, 0.5, 'F');
+      doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...grey);
+      doc.text(`KVS Spices & Traders  •  ${selectedShop}  •  ${rangeLabel}`, margin, pageH - 4);
+      doc.text(`Page ${i} of ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
+    }
+
+    const fileLabel = dateFrom || dateTo
+      ? `KVS_${selectedShop.replace(/\s+/g, '_')}_${dateFrom || 'start'}_to_${dateTo || 'now'}`
+      : `KVS_${selectedShop.replace(/\s+/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}`;
+    doc.save(`${fileLabel}.pdf`);
   };
 
   const generatePDF = async () => {
@@ -2803,7 +3248,6 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 14;
     let y = 12;
-    let pageNum = 1; // track current page to avoid re-drawing bg on page 1
 
     // ── Colors ──
     const dark = [13, 17, 23];
@@ -2828,12 +3272,28 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       doc.rect(0, 0, pageW, 3, 'F');
     };
 
-    // Helper: new-page bg (only for pages AFTER the first)
-    const drawNewPageBg = (data) => {
-      if (data.pageNumber > 1) {
+    // Track which document pages have been painted so we don't double-draw
+    const paintedPages = new Set([1]); // page 1 is painted below
+
+    // Helper: called by autoTable on every page it touches —
+    // draws the dark background + green stripe on any NEW document page.
+    const drawNewPageBg = () => {
+      const pg = doc.internal.getCurrentPageInfo().pageNumber;
+      if (!paintedPages.has(pg)) {
+        paintedPages.add(pg);
         drawPageBg();
         drawTopStripe();
       }
+    };
+
+    // Helper to add a page ourselves (for manual section breaks)
+    const addNewPage = () => {
+      doc.addPage();
+      const pg = doc.internal.getCurrentPageInfo().pageNumber;
+      paintedPages.add(pg);
+      drawPageBg();
+      drawTopStripe();
+      return 12; // return starting y
     };
 
     // Helper: section title with accent bar
@@ -2915,9 +3375,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       const soldValue = spiceSales.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
       const remainingQty = Math.max(0, totalQty - soldQty);
       const remainingValue = totalBuyValue - soldValue;
-      const avgBuy = remainingQty > 0 ? (remainingValue / remainingQty).toFixed(2) : (totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00');
+      const avgBuy = totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00';
       const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
-      const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty).toFixed(2) : '-';
+      const originalAvgBuy = totalQty > 0 ? (totalBuyValue / totalQty) : 0;
+      const profit = soldQty > 0 && originalAvgBuy > 0 ? (soldValue - originalAvgBuy * soldQty).toFixed(2) : '-';
       return [
         spice.label,
         totalQty.toFixed(2),
@@ -2950,8 +3411,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
           2: { halign: 'right' }, 4: { halign: 'right' },
           6: { halign: 'right', fontStyle: 'bold' }, 7: { halign: 'right', fontStyle: 'bold' },
         },
-        margin: { left: margin, right: margin },
-        didDrawPage: drawNewPageBg,
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
         didParseCell: (data) => {
           if (data.section === 'body') {
             if (data.column.index === 2 || data.column.index === 4) {
@@ -2977,8 +3438,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     // ── Grand Totals Card ──
     const totals = spices.reduce((acc, spice) => {
-      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id);
-      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id);
+      const se = entries.filter(e => e.shop === selectedShop && e.type === spice.id && dateFilter(e));
+      const ss = sales.filter(s => s.shop === selectedShop && s.type === spice.id && dateFilter(s));
       acc.totalBuyValue += se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
       acc.totalSellValue += ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
       acc.totalBought += se.reduce((s, e) => s + Number(e.qty), 0);
@@ -2987,10 +3448,11 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }, { totalBought: 0, totalBuyValue: 0, totalSold: 0, totalSellValue: 0 });
 
     const totalRemainingValue = totals.totalBuyValue - totals.totalSellValue;
-    const totalProfit = totals.totalSellValue - (totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0);
+    const costOfGoodsSold = totals.totalBought > 0 ? (totals.totalBuyValue / totals.totalBought) * totals.totalSold : 0;
+    const totalProfit = totals.totalSellValue - costOfGoodsSold;
 
     // Check if totals card fits on current page
-    if (y > pageH - 40) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+    if (y > pageH - 40) { y = addNewPage(); }
 
     // Totals card
     doc.setFillColor(18, 24, 33);
@@ -3021,11 +3483,76 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     });
     y += 34;
 
+    // ── Profit Breakdown per Spice ──
+    const profitData = spices.map(spice => {
+      const spiceEntries = entries.filter(e => e.shop === selectedShop && e.type === spice.id && dateFilter(e));
+      const spiceSales = sales.filter(s => s.shop === selectedShop && s.type === spice.id && dateFilter(s));
+      const totalQty = spiceEntries.reduce((s, e) => s + Number(e.qty), 0);
+      const totalBuyValue = spiceEntries.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+      const soldQty = spiceSales.reduce((s, e) => s + Number(e.qty), 0);
+      const soldValue = spiceSales.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+      const avgBuy = totalQty > 0 ? (totalBuyValue / totalQty) : 0;
+      const avgSell = soldQty > 0 ? (soldValue / soldQty) : 0;
+      const cogs = avgBuy * soldQty;
+      const profit = soldQty > 0 && avgBuy > 0 ? (soldValue - cogs) : null;
+      return { label: spice.label, soldQty, avgBuy, avgSell, soldValue, cogs, profit };
+    }).filter(r => r.soldQty > 0 && r.profit !== null);
+
+    if (profitData.length > 0) {
+      if (y > pageH - 50) { y = addNewPage(); }
+      y = sectionTitle('Profit Breakdown', y, green);
+
+      const profitRows = profitData.map(p => [
+        p.label,
+        `${p.soldQty.toFixed(2)} Kg`,
+        R(p.avgBuy.toFixed(2)),
+        R(p.avgSell.toFixed(2)),
+        R(p.soldValue.toFixed(2)),
+        R(p.cogs.toFixed(2)),
+        p.profit.toFixed(2),
+      ]);
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Spice', 'Sold Qty', 'Avg Buy', 'Avg Sell', 'Revenue', 'COGS', 'Profit']],
+        body: profitRows,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica', fontSize: 7.5, textColor: lightGrey,
+          cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, lineWidth: 0,
+        },
+        headStyles: {
+          fillColor: [30, 38, 50], textColor: green, fontStyle: 'bold', fontSize: 7,
+          cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
+        },
+        alternateRowStyles: { fillColor: [18, 22, 30] },
+        columnStyles: {
+          0: { fontStyle: 'bold', textColor: white },
+          1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' },
+          4: { halign: 'right' }, 5: { halign: 'right' },
+          6: { halign: 'right', fontStyle: 'bold' },
+        },
+        margin: { left: margin, right: margin },
+        willDrawPage: drawNewPageBg,
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 6) {
+            const v = data.cell.raw;
+            if (v && v !== '-') {
+              const num = parseFloat(v);
+              data.cell.styles.textColor = num >= 0 ? green : red;
+              data.cell.text = [`${num >= 0 ? '+' : ''}${R(num)}`];
+            }
+          }
+        },
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
     // ── Purchase Records ──
     const shopPurchases = entries.filter(e => e.shop === selectedShop && dateFilter(e)).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     if (shopPurchases.length > 0) {
-      if (y > pageH - 50) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+      if (y > pageH - 50) { y = addNewPage(); }
       y = sectionTitle('Purchase Records', y);
 
       const purchaseRows = shopPurchases.map(e => [
@@ -3045,8 +3572,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         headStyles: { fillColor: [30, 38, 50], textColor: brandGreen, fontStyle: 'bold', fontSize: 7.5 },
         alternateRowStyles: { fillColor: [18, 22, 30] },
         columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold', textColor: white } },
-        margin: { left: margin, right: margin },
-        didDrawPage: drawNewPageBg,
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
       });
       y = doc.lastAutoTable.finalY + 8;
     }
@@ -3055,7 +3582,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const shopSales = sales.filter(s => s.shop === selectedShop && dateFilter(s)).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     if (shopSales.length > 0) {
-      if (y > pageH - 50) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+      if (y > pageH - 50) { y = addNewPage(); }
       y = sectionTitle('Sale Records', y, green);
 
       const saleRows = shopSales.map(s => [
@@ -3076,8 +3603,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         headStyles: { fillColor: [30, 38, 50], textColor: green, fontStyle: 'bold', fontSize: 7.5 },
         alternateRowStyles: { fillColor: [18, 22, 30] },
         columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold', textColor: green } },
-        margin: { left: margin, right: margin },
-        didDrawPage: drawNewPageBg,
+        margin: { left: margin, right: margin, bottom: 16 },
+        willDrawPage: drawNewPageBg,
       });
       y = doc.lastAutoTable.finalY + 8;
     }
@@ -3135,7 +3662,23 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     const drawPageBg = () => { doc.setFillColor(...dark); doc.rect(0, 0, pageW, pageH, 'F'); };
     const drawTopStripe = () => { doc.setFillColor(...brandGreen); doc.rect(0, 0, pageW, 3, 'F'); };
-    const drawNewPageBg = (data) => { if (data.pageNumber > 1) { drawPageBg(); drawTopStripe(); } };
+    const paintedPages2 = new Set([1]);
+    const drawNewPageBg = () => {
+      const pg = doc.internal.getCurrentPageInfo().pageNumber;
+      if (!paintedPages2.has(pg)) {
+        paintedPages2.add(pg);
+        drawPageBg();
+        drawTopStripe();
+      }
+    };
+    const addNewPage = () => {
+      doc.addPage();
+      const pg = doc.internal.getCurrentPageInfo().pageNumber;
+      paintedPages2.add(pg);
+      drawPageBg();
+      drawTopStripe();
+      return 12;
+    };
     const sectionTitle = (title, startY, color = accent) => {
       doc.setFillColor(...color);
       doc.rect(margin, startY, 3, 10, 'F');
@@ -3172,7 +3715,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
     // ── Per-shop sections ──
     for (const shop of shops) {
-      if (y > pageH - 60) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+      if (y > pageH - 60) { y = addNewPage(); }
       y = sectionTitle(shop, y, brandGreen);
 
       const shopSummary = spices.map(spice => {
@@ -3184,9 +3727,10 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         const soldValue = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
         const remainingQty = Math.max(0, totalQty - soldQty);
         const remainingValue = totalBuyValue - soldValue;
-        const avgBuy = remainingQty > 0 ? (remainingValue / remainingQty).toFixed(2) : (totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00');
+        const avgBuy = totalQty > 0 ? (totalBuyValue / totalQty).toFixed(2) : '0.00';
         const avgSell = soldQty > 0 ? (soldValue / soldQty).toFixed(2) : '-';
-        const profit = soldQty > 0 ? (soldValue - (totalBuyValue / totalQty) * soldQty).toFixed(2) : '-';
+        const originalAvgBuy = totalQty > 0 ? (totalBuyValue / totalQty) : 0;
+        const profit = soldQty > 0 && originalAvgBuy > 0 ? (soldValue - originalAvgBuy * soldQty).toFixed(2) : '-';
         return [spice.label, totalQty.toFixed(2), avgBuy, soldQty.toFixed(2), avgSell, remainingQty.toFixed(2),
           remainingValue > 0 ? Math.round(remainingValue) : 0, profit];
       }).filter(row => Number(row[1]) > 0 || Number(row[3]) > 0);
@@ -3205,8 +3749,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
             2: { halign: 'right' }, 4: { halign: 'right' },
             6: { halign: 'right', fontStyle: 'bold' }, 7: { halign: 'right', fontStyle: 'bold' },
           },
-          margin: { left: margin, right: margin },
-          didDrawPage: drawNewPageBg,
+          margin: { left: margin, right: margin, bottom: 16 },
+          willDrawPage: drawNewPageBg,
           didParseCell: (data) => {
             if (data.section === 'body') {
               if (data.column.index === 2 || data.column.index === 4) { const v = data.cell.raw; if (v && v !== '-') data.cell.text = [R(v)]; }
@@ -3225,7 +3769,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }
 
     // ── Grand Total across all shops ──
-    if (y > pageH - 45) { doc.addPage(); drawPageBg(); drawTopStripe(); y = 12; }
+    if (y > pageH - 45) { y = addNewPage(); }
     y += 4;
     const grandTotals = { bought: 0, buyValue: 0, sold: 0, sellValue: 0 };
     shops.forEach(shop => {
@@ -3239,7 +3783,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       });
     });
     const gRemVal = grandTotals.buyValue - grandTotals.sellValue;
-    const gProfit = grandTotals.sellValue - (grandTotals.bought > 0 ? (grandTotals.buyValue / grandTotals.bought) * grandTotals.sold : 0);
+    const gCOGS = grandTotals.bought > 0 ? (grandTotals.buyValue / grandTotals.bought) * grandTotals.sold : 0;
+    const gProfit = grandTotals.sellValue - gCOGS;
 
     doc.setFillColor(18, 24, 33);
     doc.roundedRect(margin, y, pageW - margin * 2, 26, 4, 4, 'F');
@@ -3367,6 +3912,31 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               className="input-field" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', borderRadius: 10 }} />
           </div>
         </div>
+
+        {/* Filtered PDF download button – shown when any filter is active */}
+        {(dateFrom || dateTo || filterType !== 'all') && (
+          <button
+            onClick={generateFilteredPDF}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+              padding: '0.7rem 1rem', borderRadius: 12,
+              border: '1px solid rgba(76,175,80,0.35)',
+              background: 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.04) 100%)',
+              color: '#4caf50', fontSize: '0.8rem', fontWeight: 700,
+              cursor: 'pointer', fontFamily: 'Manrope, sans-serif',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <Download size={15} />
+            Download Filtered Report
+            <span style={{ fontSize: '0.65rem', fontWeight: 600, opacity: 0.7, marginLeft: 2 }}>
+              ({dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}
+              {' — '}
+              {dateTo ? format(new Date(dateTo), 'dd MMM') : '..'}
+              {filterType !== 'all' ? ` • ${filterType === 'purchase' ? 'Buys' : 'Sales'}` : ''})
+            </span>
+          </button>
+        )}
 
         {/* Report buttons */}
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -3613,7 +4183,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                 {/* Totals Card */}
                 {shopData.totals && (
                   <div style={{
-                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem',
+                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem',
                   }}>
                     {[
                       { label: 'Total Invested', value: formatINR(shopData.totals.totalBuyValue), color: '#fff' },
@@ -3624,11 +4194,53 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
                       <div key={i} style={{
                         background: 'rgba(22,27,34,0.8)', borderRadius: 10, padding: '0.6rem 0.75rem',
                         border: '1px solid rgba(255,255,255,0.04)',
+                        minWidth: 0, overflow: 'hidden',
                       }}>
                         <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.2rem' }}>{t.label}</div>
-                        <div style={{ fontSize: '1rem', fontWeight: 800, color: t.color }}>{t.value}</div>
+                        <div style={{ fontSize: 'clamp(0.78rem, 3vw, 1rem)', fontWeight: 800, color: t.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.value}</div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Per-Spice Profit Breakdown */}
+                {shopData.summary.filter(r => r.profit !== null && r.soldQty > 0).length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <h4 style={{ color: '#10b981', fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Profit Breakdown
+                    </h4>
+                    <div style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(30,38,50,0.8)' }}>
+                            {['Spice', 'Sold', 'Avg Buy', 'Avg Sell', 'Profit/Kg', 'Total Profit'].map(h => (
+                              <th key={h} style={{ padding: '0.5rem 0.4rem', color: '#10b981', fontWeight: 700, textAlign: h === 'Spice' ? 'left' : 'right', whiteSpace: 'nowrap', fontSize: '0.65rem' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shopData.summary.filter(r => r.profit !== null && r.soldQty > 0).map((r, i) => {
+                            const avgBuyNum = r.originalAvgBuy || (r.totalBuyValue && r.totalQty ? r.totalBuyValue / r.totalQty : parseFloat(r.avgBuy) || 0);
+                            const avgSellNum = parseFloat(r.avgSell) || 0;
+                            const profitPerKg = avgSellNum - avgBuyNum;
+                            return (
+                              <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(22,27,34,0.6)' : 'rgba(18,22,30,0.6)' }}>
+                                <td style={{ padding: '0.45rem 0.4rem', fontWeight: 700, color: r.color || '#fff' }}>{r.label}</td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{r.soldQty.toFixed(2)} kg</td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatINR(avgBuyNum)}</td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatINR(avgSellNum)}</td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 700, color: profitPerKg >= 0 ? '#10b981' : '#f87171' }}>
+                                  {profitPerKg >= 0 ? '+' : ''}{formatINR(profitPerKg)}
+                                </td>
+                                <td style={{ padding: '0.45rem 0.4rem', textAlign: 'right', fontWeight: 800, color: r.profit >= 0 ? '#10b981' : '#f87171', fontSize: '0.8rem' }}>
+                                  {r.profit >= 0 ? '+' : ''}{formatINR(r.profit)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
 
