@@ -2770,6 +2770,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all', 'purchase', 'sale'
+  const [filterSpice, setFilterSpice] = useState('all'); // 'all' or spice id
   const [pdfPages, setPdfPages] = useState(null); // HTML report data for viewer
   const [editRecord, setEditRecord] = useState(null); // { ...record } being edited
   const [editQty, setEditQty] = useState('');
@@ -2796,6 +2797,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     }
     // Type filter
     if (filterType !== 'all' && r.kind !== filterType) return false;
+    // Spice filter
+    if (filterSpice !== 'all' && r.type !== filterSpice) return false;
     return true;
   });
 
@@ -2889,10 +2892,12 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const dateFilter = (item) => {
       if (dateFrom) { const from = new Date(dateFrom); from.setHours(0,0,0,0); if (new Date(item.date) < from) return false; }
       if (dateTo) { const to = new Date(dateTo); to.setHours(23,59,59,999); if (new Date(item.date) > to) return false; }
+      if (filterSpice !== 'all' && item.type !== filterSpice) return false;
       return true;
     };
 
     const targetShops = scope === 'overall' ? shops : [selectedShop];
+    const targetSpices = filterSpice !== 'all' ? spices.filter(s => s.id === filterSpice) : spices;
     let csv = '';
 
     // ── Header info
@@ -2900,6 +2905,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     csv += `Generated: ${format(new Date(), 'dd MMM yyyy, h:mm a')}\n`;
     if (dateFrom || dateTo) csv += `Period: ${dateFrom ? format(new Date(dateFrom), 'dd MMM yyyy') : 'Start'} to ${dateTo ? format(new Date(dateTo), 'dd MMM yyyy') : 'Now'}\n`;
     if (filterType !== 'all') csv += `Filter: ${filterType === 'purchase' ? 'Purchases Only' : 'Sales Only'}\n`;
+    if (filterSpice !== 'all') csv += `Spice: ${spices.find(s => s.id === filterSpice)?.label || filterSpice}\n`;
     csv += '\n';
 
     // ── Spice-wise Summary per shop
@@ -2909,7 +2915,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
 
       let shopTotalBought = 0, shopTotalBuyVal = 0, shopTotalSold = 0, shopTotalSellVal = 0;
 
-      spices.forEach(spice => {
+      targetSpices.forEach(spice => {
         const se = entries.filter(e => e.shop === shop && e.type === spice.id && dateFilter(e));
         const ss = sales.filter(s => s.shop === shop && s.type === spice.id && dateFilter(s));
         const buyQty = se.reduce((s, e) => s + Number(e.qty), 0);
@@ -3040,6 +3046,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     const dFilter = (item) => {
       if (dateFrom) { const from = new Date(dateFrom); from.setHours(0,0,0,0); if (new Date(item.date) < from) return false; }
       if (dateTo) { const to = new Date(dateTo); to.setHours(23,59,59,999); if (new Date(item.date) > to) return false; }
+      if (filterSpice !== 'all' && item.type !== filterSpice) return false;
       return true;
     };
 
@@ -3051,6 +3058,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
       ? `${dateFrom ? format(new Date(dateFrom), 'dd MMM yyyy') : 'Start'} — ${dateTo ? format(new Date(dateTo), 'dd MMM yyyy') : 'Today'}`
       : 'All Time';
     const typeLabel = filterType === 'purchase' ? ' (Purchases Only)' : filterType === 'sale' ? ' (Sales Only)' : '';
+    const spiceLabel = filterSpice !== 'all' ? ` — ${spices.find(s => s.id === filterSpice)?.label || filterSpice}` : '';
 
     // ── Page 1 BG ──
     drawPageBg();
@@ -3064,7 +3072,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...brandGreen);
     doc.text('KVS Spices & Traders', margin + lOff, y + 16);
     doc.setFontSize(9); doc.setTextColor(...grey);
-    doc.text(`${selectedShop} — Filtered Report${typeLabel}`, margin + lOff, y + 24);
+    doc.text(`${selectedShop} — Filtered Report${typeLabel}${spiceLabel}`, margin + lOff, y + 24);
     doc.setFontSize(8);
     doc.text(rangeLabel, margin + lOff, y + 31);
     doc.setFontSize(7); doc.setTextColor(...grey);
@@ -3989,14 +3997,47 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               Sales
             </button>
           </div>
-          {(dateFrom || dateTo || filterType !== 'all') && (
+          {(dateFrom || dateTo || filterType !== 'all' || filterSpice !== 'all') && (
             <button
-              onClick={() => { setDateFrom(''); setDateTo(''); setFilterType('all'); }}
+              onClick={() => { setDateFrom(''); setDateTo(''); setFilterType('all'); setFilterSpice('all'); }}
               style={{ padding: '0.4rem 0.75rem', borderRadius: 9, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.08)', color: 'var(--danger)', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'Manrope, sans-serif' }}
             >
               Clear
             </button>
           )}
+        </div>
+
+        {/* Spice filter */}
+        <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.15rem', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
+          <button
+            onClick={() => setFilterSpice('all')}
+            style={{
+              flexShrink: 0, padding: '0.35rem 0.7rem', borderRadius: 8,
+              border: filterSpice === 'all' ? '1px solid rgba(245,158,11,0.5)' : '1px solid var(--rim-muted)',
+              background: filterSpice === 'all' ? 'var(--amber-glow)' : 'var(--bg-card)',
+              color: filterSpice === 'all' ? 'var(--amber-lt)' : 'var(--text-2)',
+              fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer',
+              fontFamily: "'DM Sans', sans-serif", transition: 'all 0.15s ease',
+            }}
+          >All Spices</button>
+          {spices.map(sp => (
+            <button
+              key={sp.id}
+              onClick={() => setFilterSpice(filterSpice === sp.id ? 'all' : sp.id)}
+              style={{
+                flexShrink: 0, padding: '0.35rem 0.65rem', borderRadius: 8,
+                border: filterSpice === sp.id ? `1px solid ${sp.color}` : '1px solid var(--rim-muted)',
+                background: filterSpice === sp.id ? `${sp.color}20` : 'var(--bg-card)',
+                color: filterSpice === sp.id ? sp.color : 'var(--text-2)',
+                fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer',
+                fontFamily: "'DM Sans', sans-serif", transition: 'all 0.15s ease',
+                display: 'flex', alignItems: 'center', gap: '0.3rem',
+              }}
+            >
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: sp.color, flexShrink: 0 }} />
+              {sp.label}
+            </button>
+          ))}
         </div>
 
         {/* Date range */}
@@ -4014,7 +4055,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         </div>
 
         {/* Filtered download buttons – shown when any filter is active */}
-        {(dateFrom || dateTo || filterType !== 'all') && (
+        {(dateFrom || dateTo || filterType !== 'all' || filterSpice !== 'all') && (
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               onClick={generateFilteredPDF}
@@ -4031,7 +4072,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               <Download size={14} />
               PDF
               <span style={{ fontSize: '0.6rem', fontWeight: 600, opacity: 0.7 }}>
-                ({dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}–{dateTo ? format(new Date(dateTo), 'dd MMM') : '..'})
+                {filterSpice !== 'all' ? (spices.find(s => s.id === filterSpice)?.label || '') : ''}
+                {(dateFrom || dateTo) ? ` ${dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}–${dateTo ? format(new Date(dateTo), 'dd MMM') : '..'}` : ''}
               </span>
             </button>
             <button
@@ -4049,7 +4091,8 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
               CSV
               <span style={{ fontSize: '0.6rem', fontWeight: 600, opacity: 0.7 }}>
-                ({dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}–{dateTo ? format(new Date(dateTo), 'dd MMM') : '..'})
+                {filterSpice !== 'all' ? (spices.find(s => s.id === filterSpice)?.label || '') : ''}
+                {(dateFrom || dateTo) ? ` ${dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}–${dateTo ? format(new Date(dateTo), 'dd MMM') : '..'}` : ''}
               </span>
             </button>
           </div>
@@ -4072,7 +4115,7 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
         {/* Timeline */}
         {shopRecords.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-            No records {filterType !== 'all' ? `(${filterType === 'purchase' ? 'purchases' : 'sales'})` : ''} yet.
+            No records {filterType !== 'all' ? `(${filterType === 'purchase' ? 'purchases' : 'sales'})` : ''}{filterSpice !== 'all' ? ` for ${spices.find(s => s.id === filterSpice)?.label || filterSpice}` : ''} yet.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
