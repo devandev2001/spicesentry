@@ -2883,6 +2883,103 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
     else setPdfPages({ type: 'overall', ...buildOverallReportData() });
   };
 
+  // ── CSV Download — respects dateFrom, dateTo, filterType, selectedShop ──
+  const generateCSV = (scope = 'shop') => {
+    const esc = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+    const dateFilter = (item) => {
+      if (dateFrom) { const from = new Date(dateFrom); from.setHours(0,0,0,0); if (new Date(item.date) < from) return false; }
+      if (dateTo) { const to = new Date(dateTo); to.setHours(23,59,59,999); if (new Date(item.date) > to) return false; }
+      return true;
+    };
+
+    const targetShops = scope === 'overall' ? shops : [selectedShop];
+    let csv = '';
+
+    // ── Header info
+    csv += `KVS Spices & Traders — ${scope === 'overall' ? 'All Shops' : selectedShop} Report\n`;
+    csv += `Generated: ${format(new Date(), 'dd MMM yyyy, h:mm a')}\n`;
+    if (dateFrom || dateTo) csv += `Period: ${dateFrom ? format(new Date(dateFrom), 'dd MMM yyyy') : 'Start'} to ${dateTo ? format(new Date(dateTo), 'dd MMM yyyy') : 'Now'}\n`;
+    if (filterType !== 'all') csv += `Filter: ${filterType === 'purchase' ? 'Purchases Only' : 'Sales Only'}\n`;
+    csv += '\n';
+
+    // ── Spice-wise Summary per shop
+    targetShops.forEach(shop => {
+      csv += `SUMMARY — ${shop}\n`;
+      csv += ['Spice', 'Bought (Kg)', 'Buy Value (₹)', 'Avg Buy (₹/Kg)', 'Sold (Kg)', 'Sell Value (₹)', 'Avg Sell (₹/Kg)', 'Balance (Kg)', 'Remaining Value (₹)', 'Profit (₹)'].map(esc).join(',') + '\n';
+
+      let shopTotalBought = 0, shopTotalBuyVal = 0, shopTotalSold = 0, shopTotalSellVal = 0;
+
+      spices.forEach(spice => {
+        const se = entries.filter(e => e.shop === shop && e.type === spice.id && dateFilter(e));
+        const ss = sales.filter(s => s.shop === shop && s.type === spice.id && dateFilter(s));
+        const buyQty = se.reduce((s, e) => s + Number(e.qty), 0);
+        const buyVal = se.reduce((s, e) => s + Number(e.qty) * Number(e.price), 0);
+        const sellQty = ss.reduce((s, e) => s + Number(e.qty), 0);
+        const sellVal = ss.reduce((s, e) => s + Number(e.qty) * Number(e.sellPrice), 0);
+        if (buyQty === 0 && sellQty === 0) return;
+        const avgBuy = buyQty > 0 ? (buyVal / buyQty) : 0;
+        const avgSell = sellQty > 0 ? (sellVal / sellQty) : 0;
+        const remQty = Math.max(0, buyQty - sellQty);
+        const remVal = buyVal - sellVal;
+        const cogs = avgBuy * sellQty;
+        const profit = sellQty > 0 && avgBuy > 0 ? (sellVal - cogs) : 0;
+        shopTotalBought += buyQty; shopTotalBuyVal += buyVal;
+        shopTotalSold += sellQty; shopTotalSellVal += sellVal;
+        csv += [spice.label, buyQty.toFixed(2), buyVal.toFixed(2), avgBuy.toFixed(2), sellQty.toFixed(2), sellVal.toFixed(2), avgSell > 0 ? avgSell.toFixed(2) : '-', remQty.toFixed(2), remVal.toFixed(2), profit.toFixed(2)].map(esc).join(',') + '\n';
+      });
+
+      // Totals row
+      const totalAvgBuy = shopTotalBought > 0 ? (shopTotalBuyVal / shopTotalBought) : 0;
+      const totalCOGS = totalAvgBuy * shopTotalSold;
+      const totalProfit = shopTotalSellVal - totalCOGS;
+      csv += ['TOTAL', shopTotalBought.toFixed(2), shopTotalBuyVal.toFixed(2), totalAvgBuy.toFixed(2), shopTotalSold.toFixed(2), shopTotalSellVal.toFixed(2), shopTotalSold > 0 ? (shopTotalSellVal / shopTotalSold).toFixed(2) : '-', Math.max(0, shopTotalBought - shopTotalSold).toFixed(2), (shopTotalBuyVal - shopTotalSellVal).toFixed(2), totalProfit.toFixed(2)].map(esc).join(',') + '\n';
+      csv += '\n';
+    });
+
+    // ── Purchase Records
+    if (filterType !== 'sale') {
+      const filtPurchases = entries
+        .filter(e => targetShops.includes(e.shop) && dateFilter(e))
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      if (filtPurchases.length > 0) {
+        csv += `PURCHASE RECORDS (${filtPurchases.length})\n`;
+        csv += ['Date', 'Time', 'Shop', 'Spice', 'Quantity (Kg)', 'Price/Kg (₹)', 'Total Value (₹)', 'Load ID'].map(esc).join(',') + '\n';
+        filtPurchases.forEach(e => {
+          const d = new Date(e.date);
+          csv += [format(d, 'dd-MM-yyyy'), format(d, 'hh:mm a'), e.shop, (spices.find(s => s.id === e.type)?.label || e.type), Number(e.qty).toFixed(2), Number(e.price).toFixed(2), (Number(e.qty) * Number(e.price)).toFixed(2), e.loadId || ''].map(esc).join(',') + '\n';
+        });
+        csv += '\n';
+      }
+    }
+
+    // ── Sale Records
+    if (filterType !== 'purchase') {
+      const filtSales = sales
+        .filter(s => targetShops.includes(s.shop) && dateFilter(s))
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      if (filtSales.length > 0) {
+        csv += `SALE RECORDS (${filtSales.length})\n`;
+        csv += ['Date', 'Time', 'Shop', 'Spice', 'Quantity (Kg)', 'Sell Price/Kg (₹)', 'Total Value (₹)', 'Buyer', 'Load ID'].map(esc).join(',') + '\n';
+        filtSales.forEach(s => {
+          const d = new Date(s.date);
+          csv += [format(d, 'dd-MM-yyyy'), format(d, 'hh:mm a'), s.shop, (spices.find(sp => sp.id === s.type)?.label || s.type), Number(s.qty).toFixed(2), Number(s.sellPrice).toFixed(2), (Number(s.qty) * Number(s.sellPrice)).toFixed(2), s.buyerName || '', s.loadId || ''].map(esc).join(',') + '\n';
+        });
+        csv += '\n';
+      }
+    }
+
+    // ── Download
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const shopSlug = scope === 'overall' ? 'All_Shops' : selectedShop.replace(/\s+/g, '_');
+    const dateSlug = dateFrom || dateTo ? `_${dateFrom || 'start'}_to_${dateTo || 'now'}` : '';
+    a.download = `KVS_${shopSlug}_Report${dateSlug}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // ── Filtered PDF — respects dateFrom, dateTo and filterType ──
   const generateFilteredPDF = async () => {
     const { jsPDF, autoTable } = await loadPdfTools();
@@ -3847,6 +3944,9 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
           <button className="icon-btn" onClick={() => viewReport('shop')} title={`View ${selectedShop} report`}>
             <Eye size={16} />
           </button>
+          <button className="icon-btn" onClick={() => generateCSV('shop')} title="Download CSV">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></svg>
+          </button>
           <button className="icon-btn green" onClick={generatePDF} title="Download PDF">
             <Download size={16} />
           </button>
@@ -3913,29 +4013,46 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
           </div>
         </div>
 
-        {/* Filtered PDF download button – shown when any filter is active */}
+        {/* Filtered download buttons – shown when any filter is active */}
         {(dateFrom || dateTo || filterType !== 'all') && (
-          <button
-            onClick={generateFilteredPDF}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-              padding: '0.7rem 1rem', borderRadius: 12,
-              border: '1px solid rgba(76,175,80,0.35)',
-              background: 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.04) 100%)',
-              color: '#4caf50', fontSize: '0.8rem', fontWeight: 700,
-              cursor: 'pointer', fontFamily: 'Manrope, sans-serif',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <Download size={15} />
-            Download Filtered Report
-            <span style={{ fontSize: '0.65rem', fontWeight: 600, opacity: 0.7, marginLeft: 2 }}>
-              ({dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}
-              {' — '}
-              {dateTo ? format(new Date(dateTo), 'dd MMM') : '..'}
-              {filterType !== 'all' ? ` • ${filterType === 'purchase' ? 'Buys' : 'Sales'}` : ''})
-            </span>
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={generateFilteredPDF}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                padding: '0.65rem 0.75rem', borderRadius: 12,
+                border: '1px solid rgba(76,175,80,0.35)',
+                background: 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.04) 100%)',
+                color: '#4caf50', fontSize: '0.75rem', fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'Manrope, sans-serif',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <Download size={14} />
+              PDF
+              <span style={{ fontSize: '0.6rem', fontWeight: 600, opacity: 0.7 }}>
+                ({dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}–{dateTo ? format(new Date(dateTo), 'dd MMM') : '..'})
+              </span>
+            </button>
+            <button
+              onClick={() => generateCSV('shop')}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                padding: '0.65rem 0.75rem', borderRadius: 12,
+                border: '1px solid rgba(88,166,255,0.35)',
+                background: 'linear-gradient(135deg, rgba(88,166,255,0.12) 0%, rgba(88,166,255,0.04) 100%)',
+                color: '#58a6ff', fontSize: '0.75rem', fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'Manrope, sans-serif',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              CSV
+              <span style={{ fontSize: '0.6rem', fontWeight: 600, opacity: 0.7 }}>
+                ({dateFrom ? format(new Date(dateFrom), 'dd MMM') : '..'}–{dateTo ? format(new Date(dateTo), 'dd MMM') : '..'})
+              </span>
+            </button>
+          </div>
         )}
 
         {/* Report buttons */}
@@ -3944,8 +4061,11 @@ function History({ entries, sales, selectedShop, onSelectShop, shops, spices, sh
             <Eye size={14} />
             All Shops Report
           </button>
-          <button className="action-btn-outline" onClick={generateOverallPDF} style={{ flex: 0, padding: '0.65rem 0.85rem' }}>
+          <button className="action-btn-outline" onClick={generateOverallPDF} style={{ flex: 0, padding: '0.65rem 0.85rem' }} title="All Shops PDF">
             <Download size={14} />
+          </button>
+          <button className="action-btn-outline" onClick={() => generateCSV('overall')} style={{ flex: 0, padding: '0.65rem 0.85rem' }} title="All Shops CSV">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
           </button>
         </div>
 
