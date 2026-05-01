@@ -213,25 +213,53 @@ function MainApp() {
     return resolvedLoads;
   };
 
+  // Tombstones: IDs that have been deleted (locally or remotely).
+  // Persisted to localStorage so an offline delete survives page reload until synced.
+  const TOMBSTONE_KEY = 'spice_tombstones';
+  const TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const [tombstones, setTombstones] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(TOMBSTONE_KEY) || '{}');
+      const now = Date.now();
+      // Drop expired tombstones on load
+      const fresh = {};
+      Object.entries(raw).forEach(([id, ts]) => {
+        if (now - ts < TOMBSTONE_TTL_MS) fresh[id] = ts;
+      });
+      return fresh;
+    } catch { return {}; }
+  });
+  const addTombstone = (id) => {
+    if (!id) return;
+    setTombstones(prev => {
+      const next = { ...prev, [id]: Date.now() };
+      try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   // Merge remote rows with local rows, protecting recently-added local entries
-  // (last 24h) that may not yet have propagated to the remote source, OR that
+  // (last 6h) that may not yet have propagated to the remote source, OR that
   // Firestore happens to omit on a particular read (network blip, partial result).
   // Dedupes by id/txId — remote wins for older rows.
-  const mergeRows = (remote, local) => {
-    const RECENT_MS = 24 * 60 * 60 * 1000; // 24 hours
+  // Honors tombstones (locally-deleted IDs) so deleted entries don't resurrect.
+  const mergeRows = (remote, local, tombstoneIds) => {
+    const RECENT_MS = 6 * 60 * 60 * 1000; // 6 hours
     const now = Date.now();
-    const remoteIds = new Set(remote.map(r => r.id || r.txId));
-    // Keep local rows that are recent AND not already in remote
+    // Filter remote: drop anything we know is deleted locally
+    const remoteFiltered = tombstoneIds && tombstoneIds.size > 0
+      ? remote.filter(r => !tombstoneIds.has(r.id || r.txId))
+      : remote;
+    const remoteIds = new Set(remoteFiltered.map(r => r.id || r.txId));
+    // Keep local rows that are recent, not in remote, and not tombstoned
     const recentLocalOnly = local.filter(l => {
       const id = l.id || l.txId;
       if (!id || remoteIds.has(id)) return false;
+      if (tombstoneIds && tombstoneIds.has(id)) return false;
       const ts = new Date(l.date || 0).getTime();
       return ts && (now - ts) < RECENT_MS;
     });
-    if (recentLocalOnly.length > 0) {
-      console.log(`[mergeRows] Kept ${recentLocalOnly.length} local-only recent entries not in remote (${remote.length} remote rows)`);
-    }
-    return [...recentLocalOnly, ...remote];
+    return [...recentLocalOnly, ...remoteFiltered];
   };
 
   const refreshFromFirestore = async (silent = false) => {
@@ -243,12 +271,19 @@ function MainApp() {
         getDocs(query(collection(db, 'purchases'), where('date', '>=', since.toISOString()), orderBy('date', 'desc'), limit(2000))),
         getDocs(query(collection(db, 'sales'), where('date', '>=', since.toISOString()), orderBy('date', 'desc'), limit(2000))),
       ]);
-      const purchases = purchaseSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
-      const saleRows = saleSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
-      console.log(`[Firestore] Fetched ${purchases.length} purchases, ${saleRows.length} sales (since ${since.toISOString().slice(0,10)})`);
-      // Merge — keep optimistic local entries from the last 24h
-      setEntries(prev => mergeRows(purchases, prev));
-      setSales(prev => mergeRows(saleRows, prev));
+      const allPurchases = purchaseSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() }));
+      const allSales = saleSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() }));
+      // Treat remote-deleted rows as tombstones too — prevents resurrection from another device
+      const remoteDeletedIds = new Set([
+        ...allPurchases.filter(r => r.deleted).map(r => r.id || r.txId),
+        ...allSales.filter(r => r.deleted).map(r => r.id || r.txId),
+      ]);
+      const tombstoneIds = new Set([...Object.keys(tombstones), ...remoteDeletedIds]);
+      const purchases = allPurchases.filter(r => !r.deleted);
+      const saleRows = allSales.filter(r => !r.deleted);
+      // Merge — keep optimistic local entries from the last 6h, honor tombstones
+      setEntries(prev => mergeRows(purchases, prev, tombstoneIds));
+      setSales(prev => mergeRows(saleRows, prev, tombstoneIds));
       const loads = deriveLoadsFromItems([...purchases, ...saleRows]);
       if (Object.keys(loads).length > 0) setShopLoads(prev => ({ ...prev, ...loads }));
       setLastSync(new Date());
@@ -270,13 +305,14 @@ function MainApp() {
 
       // Only overwrite if sheet actually returned non-empty arrays.
       // Empty arrays from Apps Script (quota, parse error, etc.) would otherwise wipe local data.
+      const tombstoneIds = new Set(Object.keys(tombstones));
       if (Array.isArray(data.entries) && data.entries.length > 0) {
         const remote = data.entries.map(normalizeShop);
-        setEntries(prev => mergeRows(remote, prev));
+        setEntries(prev => mergeRows(remote, prev, tombstoneIds));
       }
       if (Array.isArray(data.sales) && data.sales.length > 0) {
         const remote = data.sales.map(normalizeShop);
-        setSales(prev => mergeRows(remote, prev));
+        setSales(prev => mergeRows(remote, prev, tombstoneIds));
       }
 
       // Build loads: use sheet loads if available, otherwise derive from entries
@@ -539,6 +575,7 @@ function MainApp() {
 
   const handleDeleteEntry = async (id) => {
     if (await showConfirm('Delete this purchase entry?')) {
+      addTombstone(id);
       setEntries(prev => prev.filter(e => e.id !== id));
       await setDoc(doc(collection(db, 'purchases'), id.toString()), { deleted: true, deletedAt: new Date().toISOString() }, { merge: true });
       postToSheet({ kind: 'delete_entry', id: id.toString() })
@@ -549,6 +586,7 @@ function MainApp() {
 
   const handleDeleteSale = async (id) => {
     if (await showConfirm('Delete this sale entry?')) {
+      addTombstone(id);
       setSales(prev => prev.filter(s => s.id !== id));
       await setDoc(doc(collection(db, 'sales'), id.toString()), { deleted: true, deletedAt: new Date().toISOString() }, { merge: true });
       postToSheet({ kind: 'delete_sale', id: id.toString() })
