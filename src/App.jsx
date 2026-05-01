@@ -213,6 +213,23 @@ function MainApp() {
     return resolvedLoads;
   };
 
+  // Merge remote rows with local rows, protecting recently-added local entries
+  // (last 60s) that may not yet have propagated to the remote source.
+  // Dedupes by id/txId — remote wins for older rows.
+  const mergeRows = (remote, local) => {
+    const RECENT_MS = 60 * 1000;
+    const now = Date.now();
+    const remoteIds = new Set(remote.map(r => r.id || r.txId));
+    // Keep local rows that are recent AND not already in remote
+    const recentLocalOnly = local.filter(l => {
+      const id = l.id || l.txId;
+      if (!id || remoteIds.has(id)) return false;
+      const ts = new Date(l.date || 0).getTime();
+      return ts && (now - ts) < RECENT_MS;
+    });
+    return [...recentLocalOnly, ...remote];
+  };
+
   const refreshFromFirestore = async (silent = false) => {
     if (!silent) setSyncing(true);
     try {
@@ -224,8 +241,9 @@ function MainApp() {
       ]);
       const purchases = purchaseSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
       const saleRows = saleSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
-      setEntries(purchases);
-      setSales(saleRows);
+      // Merge — keep optimistic local entries from the last 60s
+      setEntries(prev => mergeRows(purchases, prev));
+      setSales(prev => mergeRows(saleRows, prev));
       const loads = deriveLoadsFromItems([...purchases, ...saleRows]);
       if (Object.keys(loads).length > 0) setShopLoads(prev => ({ ...prev, ...loads }));
       setLastSync(new Date());
@@ -245,8 +263,16 @@ function MainApp() {
       if (!res.ok) throw new Error('Network error ' + res.status);
       const data = await res.json();
 
-      if (data.entries) setEntries(data.entries.map(normalizeShop));
-      if (data.sales)  setSales(data.sales.map(normalizeShop));
+      // Only overwrite if sheet actually returned non-empty arrays.
+      // Empty arrays from Apps Script (quota, parse error, etc.) would otherwise wipe local data.
+      if (Array.isArray(data.entries) && data.entries.length > 0) {
+        const remote = data.entries.map(normalizeShop);
+        setEntries(prev => mergeRows(remote, prev));
+      }
+      if (Array.isArray(data.sales) && data.sales.length > 0) {
+        const remote = data.sales.map(normalizeShop);
+        setSales(prev => mergeRows(remote, prev));
+      }
 
       // Build loads: use sheet loads if available, otherwise derive from entries
       let resolvedLoads = {};
@@ -283,8 +309,10 @@ function MainApp() {
   };
 
   const refreshData = async (silent = false) => {
-    const ok = await refreshFromSheets(silent);
-    if (!ok) await refreshFromFirestore(silent);
+    // Firestore is the source of truth (consistent reads, instant).
+    // Sheets is a write-only mirror; only used as fallback if Firestore fails.
+    const ok = await refreshFromFirestore(silent);
+    if (!ok) await refreshFromSheets(silent);
   };
 
   // ── Fetch on mount + periodic refresh ──
