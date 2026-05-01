@@ -214,10 +214,11 @@ function MainApp() {
   };
 
   // Merge remote rows with local rows, protecting recently-added local entries
-  // (last 60s) that may not yet have propagated to the remote source.
+  // (last 24h) that may not yet have propagated to the remote source, OR that
+  // Firestore happens to omit on a particular read (network blip, partial result).
   // Dedupes by id/txId — remote wins for older rows.
   const mergeRows = (remote, local) => {
-    const RECENT_MS = 60 * 1000;
+    const RECENT_MS = 24 * 60 * 60 * 1000; // 24 hours
     const now = Date.now();
     const remoteIds = new Set(remote.map(r => r.id || r.txId));
     // Keep local rows that are recent AND not already in remote
@@ -227,6 +228,9 @@ function MainApp() {
       const ts = new Date(l.date || 0).getTime();
       return ts && (now - ts) < RECENT_MS;
     });
+    if (recentLocalOnly.length > 0) {
+      console.log(`[mergeRows] Kept ${recentLocalOnly.length} local-only recent entries not in remote (${remote.length} remote rows)`);
+    }
     return [...recentLocalOnly, ...remote];
   };
 
@@ -241,7 +245,8 @@ function MainApp() {
       ]);
       const purchases = purchaseSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
       const saleRows = saleSnap.docs.map(d => normalizeShop({ id: d.id, ...d.data() })).filter(r => !r.deleted);
-      // Merge — keep optimistic local entries from the last 60s
+      console.log(`[Firestore] Fetched ${purchases.length} purchases, ${saleRows.length} sales (since ${since.toISOString().slice(0,10)})`);
+      // Merge — keep optimistic local entries from the last 24h
       setEntries(prev => mergeRows(purchases, prev));
       setSales(prev => mergeRows(saleRows, prev));
       const loads = deriveLoadsFromItems([...purchases, ...saleRows]);
