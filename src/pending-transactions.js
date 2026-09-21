@@ -1,12 +1,12 @@
 // Each submitted record has its own durable key, so a queue flush cannot erase
 // a different record submitted while it is waiting for the network.
 const activeDrains = new Map();
-export const transactionCacheKey = (name, userId) => `${name}:${encodeURIComponent(userId)}`;
+export const transactionCacheKey = (name, userId, generation = 'initial') => `${name}:${encodeURIComponent(userId)}${generation === 'initial' ? '' : `:ledger:${encodeURIComponent(generation)}`}`;
 
-export function createTransactionOutbox({ storage, userId, writePrimary, writeMirror, markMirrored = async () => {}, onChange = () => {}, isActive = () => true }) {
+export function createTransactionOutbox({ storage, userId, generation = 'initial', writePrimary, writeMirror, markMirrored = async () => {}, onChange = () => {}, isActive = () => true }) {
   let enabled = true;
   const active = () => enabled && isActive();
-  const prefix = `spicesentry_pending_v1:${encodeURIComponent(userId)}:`;
+  const prefix = generation === 'initial' ? `spicesentry_pending_v1:${encodeURIComponent(userId)}:` : `spicesentry_pending_v2:${encodeURIComponent(generation)}:${encodeURIComponent(userId)}:`;
   const keyFor = id => prefix + encodeURIComponent(id);
   const read = key => {
     const raw = storage.getItem(key);
@@ -28,8 +28,9 @@ export function createTransactionOutbox({ storage, userId, writePrimary, writeMi
     onChange();
   };
   const enqueue = operation => {
+    if (!active()) throw new Error('The account or ledger changed. Reload before recording an entry.');
     try {
-      save({ ...operation, primarySaved: false, stage: 'primary', error: null });
+      save({ ...operation, ledgerGeneration: generation, primarySaved: false, stage: 'primary', error: null });
     } catch {
       throw new Error('Could not save this entry on this device. Free some browser storage and try again.');
     }
@@ -40,12 +41,14 @@ export function createTransactionOutbox({ storage, userId, writePrimary, writeMi
     try {
       if (!operation.primarySaved) {
         await writePrimary(operation);
+        if (!active()) return;
         operation = { ...operation, primarySaved: true, stage: 'mirror', error: null };
         save(operation);
       }
       if (!active()) return;
       if (!operation.mirrorSaved) {
         await writeMirror(operation);
+        if (!active()) return;
         operation = { ...operation, mirrorSaved: true, stage: 'confirmation', error: null };
         save(operation);
       }
@@ -54,7 +57,7 @@ export function createTransactionOutbox({ storage, userId, writePrimary, writeMi
       if (!active()) return;
       // Keep an immediately usable snapshot before removing the durable outbox
       // item. This closes the reload gap before React's debounced cache runs.
-      const cacheKey = transactionCacheKey(operation.firestoreCollection === 'purchases' ? 'spice_entries' : 'spice_sales', userId);
+      const cacheKey = transactionCacheKey(operation.firestoreCollection === 'purchases' ? 'spice_entries' : 'spice_sales', userId, generation);
       let rows = [];
       try {
         const cached = JSON.parse(storage.getItem(cacheKey) || '[]');
@@ -65,6 +68,7 @@ export function createTransactionOutbox({ storage, userId, writePrimary, writeMi
       storage.removeItem(key);
       onChange();
     } catch (error) {
+      if (!active()) return;
       // Never delete a failed operation. The same ID and stage are retried on
       // return/reconnection, including after the browser process is killed.
       save({ ...operation, error: error?.message || 'Could not sync this entry.' });

@@ -7,7 +7,7 @@ function memoryStorage() {
   return { get length() { return values.size; }, key: i => [...values.keys()][i],
     getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
 }
-const operation = (id = 'purchase-1') => ({ firestoreCollection: 'purchases', record: { id, txId: id, kind: 'entry', shop: 'Kallar', type: 'pepper', qty: 3, price: 125, totalValue: 375, date: '2026-09-20T10:00:00.000Z', loadId: 'load-1' }, sheetPayload: { id, kind: 'entry' } });
+const operation = (id = 'purchase-1') => ({ firestoreCollection: 'purchases', record: { id, txId: id, kind: 'entry', shop: '20 Acre', type: 'pepper', qty: 3, price: 125, totalValue: 375, date: '2026-09-20T10:00:00.000Z', loadId: 'load-1' }, sheetPayload: { id, kind: 'entry' } });
 const makeOutbox = (storage, overrides = {}) => createTransactionOutbox({ storage, userId: 'owner-1', writePrimary: async () => {}, writeMirror: async () => {}, ...overrides });
 
 test('a submitted record survives immediate app recreation before any cloud write', () => {
@@ -108,4 +108,25 @@ test('an old account drain pauses after logout without writing into the next acc
   assert.equal(storage.getItem('spice_entries'), null, 'Never populate the legacy shared cache');
   assert.equal(storage.getItem('spice_entries:owner-1'), null, 'Do not finish a stale account drain');
   assert.deepEqual(JSON.parse(storage.getItem('spice_entries:staff-2')), nextAccountRows);
+});
+
+test('an inactive stale tab cannot enqueue after another tab resets the ledger', () => {
+  const storage = memoryStorage();
+  const oldTab = makeOutbox(storage, { isActive: () => false });
+  assert.throws(() => oldTab.enqueue(operation('old-tab')), /changed|inactive|reload/i);
+  assert.equal(oldTab.pending().length, 0);
+});
+
+test('late writes to an older ledger queue are invisible to the current ledger', async () => {
+  const storage = memoryStorage();
+  const oldTab = makeOutbox(storage, { generation: 'reset-1' });
+  oldTab.enqueue(operation('old-tab'));
+  let writes = 0;
+  const current = makeOutbox(storage, { generation: 'reset-2', writePrimary: async () => { writes++; } });
+  assert.equal(current.pending().length, 0);
+  current.enqueue(operation('new-tab'));
+  await current.flush();
+  assert.equal(writes, 1);
+  assert.equal(oldTab.pending().length, 1);
+  assert.equal(JSON.parse(storage.getItem('spice_entries:owner-1:ledger:reset-2'))[0].id, 'new-tab');
 });

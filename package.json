@@ -12,7 +12,10 @@
     "backfill:firestore": "node scripts/backfill-sheet-to-firestore.mjs --write",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "context:refresh": "node scripts/refresh-context.mjs",
+    "context:check": "node scripts/refresh-context.mjs --check",
+    "context:query": "graphify query"
   },
   "dependencies": {
     "body-parser": "^2.2.2",

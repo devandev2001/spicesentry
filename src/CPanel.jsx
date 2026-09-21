@@ -271,17 +271,20 @@ function ShopsPanel({ shops, configShops, setConfigShops, onUpdateConfig }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [editName, setEditName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
-  const effectiveShops = configShops.length > 0 ? configShops : shops.map(s => ({ name: s, active: true }));
+  const effectiveShops = (configShops.length > 0 ? configShops : shops.map(s => ({ name: s, active: true }))).filter(shop => shop.name.trim().toLowerCase() !== 'kallar');
 
   const saveShops = async (list) => {
+    if (list.some(shop => shop.name.trim().toLowerCase() === 'kallar')) { setSaveError('Kallar is no longer an available branch.'); return; }
+    setSaveError('');
     setSaving(true);
     try {
       await setDoc(doc(db, 'config', 'shops'), { list });
       setConfigShops(list);
       if (onUpdateConfig) onUpdateConfig('shops', list);
     } catch (err) {
-      console.error('Failed to save shops:', err);
+      setSaveError(err.message || 'Could not save branches. Please retry.');
     }
     setSaving(false);
   };
@@ -318,6 +321,7 @@ function ShopsPanel({ shops, configShops, setConfigShops, onUpdateConfig }) {
         <h2 className="section-title">Shops ({effectiveShops.length})</h2>
       </div>
 
+      {saveError && <p role="alert" style={{ color: 'var(--danger, #b91c1c)' }}>{saveError}</p>}
       <div className="cpanel-inline-form">
         <input className="input-field" value={newShop} onChange={e => setNewShop(e.target.value)} placeholder="New shop name..." onKeyDown={e => e.key === 'Enter' && handleAdd()} />
         <button className="cpanel-add-btn" onClick={handleAdd} disabled={!newShop.trim() || saving}><Plus size={16} /> Add</button>

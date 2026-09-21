@@ -34,7 +34,7 @@ const CONFIG = {
   RECIPIENT: '919946182774',
   
   // Shop names
-  SHOPS: ['20 Acre', 'Anachal', 'Kallar'],
+  SHOPS: ['20 Acre', 'Anachal'],
   
   // Spice labels
   SPICE_LABELS: {

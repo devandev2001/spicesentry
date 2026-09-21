@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 import { AuthContext } from './auth-context';
+import { LEDGER_GENERATION_KEY } from './ledger-cache';
 
 const unsupportedBiometric = async () => ({ ok: false, error: 'Use your PIN to sign in. Biometric login needs server verification.' });
 
@@ -33,6 +34,7 @@ export function AuthProvider({ children }) {
       .finally(() => { if (!cancelled) setLoading(false); });
     const expired = () => setUser(null);
     const switchedAccount = event => {
+      if (event.key === LEDGER_GENERATION_KEY) window.location.reload();
       if (event.key === 'spicesentry_cache_account') setUser(current => current && current.uid !== event.newValue ? null : current);
     };
     window.addEventListener('spicesentry-session-expired', expired);

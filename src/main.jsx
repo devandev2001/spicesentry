@@ -6,7 +6,7 @@ import { AuthProvider } from './AuthContext'
 
 // ── Version-based hard refresh ──
 // Bump this string every time you deploy so returning users auto-reload.
-const APP_VERSION = '2026.09.21.1';
+const APP_VERSION = '2026.09.21.2';
 
 (function checkVersion() {
   const stored = localStorage.getItem('spicesentry_version');

@@ -6,6 +6,8 @@ See [login recovery and server hosting](docs/login-recovery.md) for credential s
 
 Run `npm test` for authentication, authorization, transaction persistence, and retry regressions. The [application audit](docs/application-audit-2026-09-21.md) records the original findings; [storage and recovery](docs/storage-and-recovery.md) explains the submitted-entry fix.
 
+Project decisions and storage boundaries are maintained in [project context](docs/project-context.md). The [Graphify report](graphify-out/GRAPH_REPORT.md) and interactive `graphify-out/graph.html` map source relationships. Install the optional context tool with `uv tool install --python 3.12 graphifyy==0.8.36`, then run `npm run context:refresh` after changes and `npm run context:check` to verify freshness. Ask focused questions with `npm run context:query -- "Firestore primary ledger"`. Graphify stores project context; business records remain in Firestore.
+
 ## Frontend tooling
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

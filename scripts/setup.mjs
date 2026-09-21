@@ -56,7 +56,6 @@ async function setup() {
     list: [
       { name: '20 Acre', active: true },
       { name: 'Anachal', active: true },
-      { name: 'Kallar', active: true },
     ]
   });
   await db.collection('config').doc('spices').set({

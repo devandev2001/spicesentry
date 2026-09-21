@@ -1,0 +1,33 @@
+# Project context only. Never index credentials, records, exports, or backups.
+.git/
+.codex/
+node_modules/
+**/node_modules/
+dist/
+dist-ssr/
+graphify-out/
+.graphify-cache/
+.env*
+**/.env*
+*credential*
+**/*credential*
+service-account.json
+kvs-traders-firebase-adminsdk*.json
+**/*service-account*.json
+**/*firebase-adminsdk*.json
+backups/
+**/backups/
+**/*backup*
+**/*.csv
+**/*.xlsx
+**/*.sqlite
+**/*.db
+whatsapp-cron/Code.gs
+package-lock.json
+**/package-lock.json
+*.png
+**/*.png
+*.svg
+**/*.svg
+# Historical audit results stay available as source documents, not current truth.
+docs/application-audit-2026-09-21.md

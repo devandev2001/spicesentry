@@ -1,4 +1,5 @@
 import express from 'express';
+import { assertLedgerGeneration } from './ledger.mjs';
 import { credentialVersion, createLoginLimiter, equal, issueSession, publicUser, readSession, SESSION_MS, verifyPin } from './auth.mjs';
 
 export const apiError = (status, message) => Object.assign(new Error(message), { status });
@@ -41,9 +42,9 @@ export function createApi({ store, sessionSecret, now = () => Date.now(), secure
     if (!user || user.active === false || !['owner', 'staff'].includes(user.role) || !await verifyPin(pin, user.pin)) throw apiError(401, 'The PIN does not match this account.');
     limiter.success(uid);
     res.cookie('spicesentry_session', issueSession(user, sessionSecret, now()), cookieOptions);
-    res.json({ user: publicUser(user) });
+    res.json({ user: publicUser(user), ledger: await store.getLedgerState() });
   }));
-  app.get('/api/auth/session', route(async (req, res) => res.json({ user: publicUser(await account(req)) })));
+  app.get('/api/auth/session', route(async (req, res) => res.json({ user: publicUser(await account(req)), ledger: await store.getLedgerState() })));
   app.post('/api/auth/pin', route(async (req, res) => {
     const user = await account(req);
     const { currentPin, newPin } = req.body || {};
@@ -69,22 +70,24 @@ export function createApi({ store, sessionSecret, now = () => Date.now(), secure
   app.post('/api/data/:operation', route(async (req, res) => {
     const user = await account(req);
     if (req.body?.expectedUserId !== undefined && req.body.expectedUserId !== user.uid) throw Object.assign(apiError(403, 'The signed-in account changed. Sign in again.'), { code: 'account-mismatch' });
-    const { collection, id, data, merge = false, constraints = [], record } = req.body || {};
+    const { collection, id, data, merge = false, constraints = [], record, ledgerGeneration } = req.body || {};
+    assertLedgerGeneration(await store.getLedgerState(), ledgerGeneration);
     if (!collections.has(collection)) throw apiError(400, 'Unsupported record collection.');
     switch (req.params.operation) {
+      case 'check': return res.json({ ok: true });
       case 'query': return res.json({ documents: await store.queryDocuments(collection, constraints, user) });
       case 'get':
         if (!idIsValid(id)) throw apiError(400, 'Invalid record ID.');
         return res.json({ document: await store.getDocument(collection, id, user) });
       case 'set':
         if (!idIsValid(id) || !data || typeof data !== 'object' || Array.isArray(data) || typeof merge !== 'boolean') throw apiError(400, 'Invalid record.');
-        await store.setDocument(collection, id, data, merge, user); return res.json({ ok: true });
+        await store.setDocument(collection, id, data, merge, user, ledgerGeneration); return res.json({ ok: true });
       case 'delete':
         if (!idIsValid(id)) throw apiError(400, 'Invalid record ID.');
-        await store.deleteDocument(collection, id, user); return res.json({ ok: true });
+        await store.deleteDocument(collection, id, user, ledgerGeneration); return res.json({ ok: true });
       case 'commit':
         if (!['purchases', 'sales'].includes(collection) || !record || !idIsValid(record.txId)) throw apiError(400, 'Invalid purchase or sale.');
-        await store.createTransaction(collection, record, user); return res.json({ ok: true });
+        await store.createTransaction(collection, record, user, ledgerGeneration); return res.json({ ok: true });
       default: throw apiError(404, 'Unknown data operation.');
     }
   }));
@@ -92,7 +95,7 @@ export function createApi({ store, sessionSecret, now = () => Date.now(), secure
   app.use((error, _req, res, next) => {
     if (res.headersSent) return next(error);
     const status = error.status >= 400 && error.status < 500 ? error.status : 503;
-    res.status(status).json({ error: status === 503 ? 'The database is unavailable. Please retry shortly.' : error.message, ...(error.code === 'account-mismatch' ? { code: error.code } : {}) });
+    res.status(status).json({ error: status === 503 ? 'The database is unavailable. Please retry shortly.' : error.message, ...(['account-mismatch', 'ledger-reset', 'ledger-maintenance'].includes(error.code) ? { code: error.code } : {}) });
   });
   return app;
 }

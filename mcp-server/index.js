@@ -42,7 +42,7 @@ async function atlasRequest(action, body) {
 }
 
 // ── Shops & spice definitions (mirrors the front-end) ───────────────────
-const SHOPS  = ["KVS Anachal", "20 Acre", "Kallar"];
+const SHOPS  = ["KVS Anachal", "20 Acre"];
 const SPICES = [
   { id: "cardamom",    label: "Cardamom" },
   { id: "pepper",      label: "Pepper" },

@@ -6,6 +6,7 @@ import { db, collection, doc, getDocs, setDoc, query, where, orderBy, limit, inc
 import LoginPage from './LoginPage';
 import { useTransactionSync } from './useTransactionSync';
 import { mergeTransactionRows, transactionCacheKey } from './pending-transactions';
+import { api, isLedgerCurrent, getLedgerGeneration } from './api';
 const CPanel = lazy(() => import('./CPanel'));
 
 // ── Toast Notification System ──
@@ -38,7 +39,7 @@ const formatINR = (num) => {
   return `₹${n < 0 ? '-' : ''}${formatted}`;
 };
 
-const SHOPS = ['20 Acre', 'Anachal', 'Kallar'];
+const SHOPS = ['20 Acre', 'Anachal'];
 const SPICES = [
   { id: 'cardamom', label: 'Cardamom', color: 'var(--cardamom-main)' },
   { id: 'pepper', label: 'Pepper', color: 'var(--pepper-main)' },
@@ -87,10 +88,13 @@ function getOfflineQueue() {
 }
 
 function saveOfflineQueue(queue) {
+  if (!isLedgerCurrent()) return;
   localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
 }
 
 function postToSheet(payload) {
+  if (!isLedgerCurrent()) return Promise.reject(new Error('The ledger changed. Reload the application.'));
+  payload = { ...payload, ledgerGeneration: getLedgerGeneration() };
   if (!navigator.onLine) {
     const queue = getOfflineQueue();
     queue.push(payload);
@@ -99,7 +103,8 @@ function postToSheet(payload) {
     return Promise.resolve();
   }
   const url = GSHEET_URL + '?data=' + encodeURIComponent(JSON.stringify(payload));
-  return fetch(url, { redirect: 'follow' }).catch(err => {
+  return api('data/check', { collection: 'purchases' }).then(() => fetch(url, { redirect: 'follow' })).catch(err => {
+    if (!isLedgerCurrent() || err.code === 'ledger-reset' || err.code === 'ledger-maintenance') throw err;
     // Network error — queue for retry
     const queue = getOfflineQueue();
     queue.push(payload);
@@ -114,10 +119,13 @@ async function flushOfflineQueue() {
   console.log(`Flushing ${queue.length} offline queued items…`);
   const remaining = [];
   for (const payload of queue) {
+    if ((payload.ledgerGeneration || 'initial') !== getLedgerGeneration()) continue;
     try {
+      await api('data/check', { collection: 'purchases' });
       const url = GSHEET_URL + '?data=' + encodeURIComponent(JSON.stringify(payload));
       await fetch(url, { redirect: 'follow' });
-    } catch {
+    } catch (error) {
+      if (!isLedgerCurrent() || error.code === 'ledger-reset' || error.code === 'ledger-maintenance') return;
       remaining.push(payload);
     }
   }
@@ -149,9 +157,9 @@ function MainApp() {
   } = useAuth();
   const availableShops = useMemo(() => isOwner ? SHOPS : SHOPS.filter(shop => shop === currentUser.shop), [isOwner, currentUser.shop]);
   const { pendingTransactions, queueTransaction, readPendingTransactions, retryTransactions } = useTransactionSync(currentUser.uid, GSHEET_URL);
-  const entriesStorageKey = transactionCacheKey('spice_entries', currentUser.uid);
-  const salesStorageKey = transactionCacheKey('spice_sales', currentUser.uid);
-  const loadsStorageKey = transactionCacheKey('spice_shop_loads', currentUser.uid);
+  const entriesStorageKey = transactionCacheKey('spice_entries', currentUser.uid, getLedgerGeneration());
+  const salesStorageKey = transactionCacheKey('spice_sales', currentUser.uid, getLedgerGeneration());
+  const loadsStorageKey = transactionCacheKey('spice_shop_loads', currentUser.uid, getLedgerGeneration());
   const [activeTab, setActiveTab] = useState('dashboard');
   const shopStorageKey = `spicesentry_shop:${currentUser.uid}`;
   const [selectedShop, updateSelectedShop] = useState(() => {
@@ -339,6 +347,7 @@ function MainApp() {
   // the outbox. Flush snapshots when leaving so ordinary navigation stays fast.
   useEffect(() => {
     const save = () => {
+      if (!isLedgerCurrent()) return;
       try {
         localStorage.setItem(entriesStorageKey, JSON.stringify(entries));
         localStorage.setItem(salesStorageKey, JSON.stringify(sales));
@@ -1637,7 +1646,7 @@ function AddEntry({ onAdd, shops, spices, selectedShop, showToast }) {
       if (text.includes(keyword)) { setType(id); break; }
     }
     // Match shop
-    const shopMap = { '20 acre': '20 Acre', 'twenty acre': '20 Acre', anachal: 'Anachal', kallar: 'Kallar' };
+    const shopMap = { '20 acre': '20 Acre', 'twenty acre': '20 Acre', anachal: 'Anachal' };
     for (const [keyword, name] of Object.entries(shopMap)) {
       if (text.includes(keyword)) { setShop(name); break; }
     }

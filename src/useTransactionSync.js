@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { db, doc, setDoc, commitTransactionRecord } from './firebase';
 import { createTransactionOutbox } from './pending-transactions';
+import { api, isLedgerCurrent, getLedgerGeneration } from './api';
 
 export function useTransactionSync(userId, sheetUrl) {
   const [revision, setRevision] = useState(0);
@@ -8,10 +9,14 @@ export function useTransactionSync(userId, sheetUrl) {
   const outbox = useMemo(() => createTransactionOutbox({
     storage: localStorage,
     userId,
-    isActive: () => localStorage.getItem('spicesentry_cache_account') === userId,
+    generation: getLedgerGeneration(),
+    isActive: () => localStorage.getItem('spicesentry_cache_account') === userId && isLedgerCurrent(),
     onChange: notify,
     writePrimary: ({ firestoreCollection, record }) => commitTransactionRecord(firestoreCollection, record, userId),
     writeMirror: async ({ sheetPayload }) => {
+      // Even an operation whose primary write previously succeeded must prove
+      // it still belongs to the current ledger before touching the mirror.
+      await api('data/check', { collection: 'purchases', expectedUserId: userId });
       const response = await fetch(`${sheetUrl}?data=${encodeURIComponent(JSON.stringify(sheetPayload))}`, {
         redirect: 'follow', signal: AbortSignal.timeout(15000),
       });
@@ -44,7 +49,7 @@ export function useTransactionSync(userId, sheetUrl) {
   }, [outbox, notify]);
   useEffect(() => {
     const onStorage = event => {
-      if (event.key?.startsWith('spicesentry_pending_v1:')) notify();
+      if (/^spicesentry_pending_v[12]:/.test(event.key || '')) notify();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);

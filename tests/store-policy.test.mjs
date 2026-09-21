@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore, validateRecord } from '../server/store.mjs';
 
-const staff = { uid: 'staff-1', role: 'staff', shop: 'Kallar', active: true };
+const staff = { uid: 'staff-1', role: 'staff', shop: '20 Acre', active: true };
 const owner = { uid: 'owner-1', role: 'owner', active: true };
 const record = overrides => ({
-  id: 'purchase-1', txId: 'purchase-1', kind: 'entry', shop: 'Kallar', type: 'pepper',
+  id: 'purchase-1', txId: 'purchase-1', kind: 'entry', shop: '20 Acre', type: 'pepper',
   qty: 3, price: 125, totalValue: 375, date: '2026-09-21T20:00:00.000Z', loadId: 'load-1', ...overrides,
 });
 const status = expected => error => error?.status === expected;
 
-function fakeDatabase(seed = {}) {
+function fakeDatabase(seed = {}, { beforeTransaction } = {}) {
   const records = new Map(Object.entries(seed));
   const writes = [];
   const snapshot = path => ({ id: path.split('/').at(-1), exists: records.has(path), data: () => records.get(path) });
@@ -32,6 +32,7 @@ function fakeDatabase(seed = {}) {
       return collection;
     },
     async runTransaction(callback) {
+      beforeTransaction?.(records);
       const pending = [];
       const result = await callback({
         get: async ref => ref.path ? snapshot(ref.path) : ref.get(),
@@ -88,7 +89,7 @@ test('atomic transaction retries preserve the first record and increment its dai
   assert.equal(writes.filter(write => write.path.startsWith('purchases/')).length, 1);
   const summaries = writes.filter(write => write.path.startsWith('daily_summaries/'));
   assert.equal(summaries.length, 1);
-  assert.equal(summaries[0].path, 'daily_summaries/Kallar|2026-09-22');
+  assert.equal(summaries[0].path, 'daily_summaries/20 Acre|2026-09-22');
   assert.ok(summaries[0].data.purchaseQty);
   assert.ok(summaries[0].data.purchaseValue);
 });
@@ -106,7 +107,7 @@ test('staff cannot edit existing business values, delete records, change config,
   await assert.rejects(store.setDocument('purchases', 'purchase-1', { qty: 4 }, true, staff), status(403));
   await assert.rejects(store.deleteDocument('purchases', 'purchase-1', staff), status(403));
   await assert.rejects(store.setDocument('config', 'settings', { activeLoad: 'another' }, true, staff), status(403));
-  await assert.rejects(store.setDocument('daily_summaries', 'Kallar|2026-09-21', {}, true, staff), status(403));
+  await assert.rejects(store.setDocument('daily_summaries', '20 Acre|2026-09-21', {}, true, staff), status(403));
   await assert.rejects(store.mutateUser('update', 'owner-1', { role: 'staff' }, staff), status(403));
   assert.equal(records.get('purchases/purchase-1').qty, 3);
   assert.equal(writes.length, 0);
@@ -149,4 +150,75 @@ test('legacy Anachal records remain readable to staff assigned to the canonical 
   assert.equal((await store.queryDocuments('purchases', [], anachalStaff)).length, 1);
   assert.ok(await store.getDocument('purchases', 'purchase-1', anachalStaff));
   await assert.rejects(store.getDocument('purchases', 'purchase-1', staff), status(403));
+});
+
+test('removed Kallar branch cannot receive new purchases or sales even from owners', async () => {
+  const { store, writes } = fakeDatabase();
+  await assert.rejects(store.createTransaction('purchases', record({ shop: 'Kallar' }), owner), status(400));
+  await assert.rejects(store.createTransaction('sales', record({ shop: 'Kallar', kind: 'sale', sellPrice: 200 }), owner), status(400));
+  assert.equal(writes.length, 0);
+});
+
+test('ledger state defaults to the initial generation until an explicit reset', async () => {
+  const { store } = fakeDatabase();
+  assert.deepEqual(await store.getLedgerState(), { generation: 'initial', status: 'active' });
+  const reset = fakeDatabase({ '_system/ledger': { generation: 'reset-1', status: 'active' } });
+  assert.deepEqual(await reset.store.getLedgerState(), { generation: 'reset-1', status: 'active' });
+});
+
+const ledgerMutations = [
+  ['purchase submission', (store, generation) => store.createTransaction('purchases', record(), owner, generation)],
+  ['sale submission', (store, generation) => store.createTransaction('sales', record({ kind: 'sale', sellPrice: 200 }), owner, generation)],
+  ['record replacement', (store, generation) => store.setDocument('purchases', 'purchase-1', record(), false, owner, generation)],
+  ['mirror acknowledgement', (store, generation) => store.setDocument('purchases', 'purchase-1', { mirrorStatus: 'synced' }, true, owner, generation)],
+  ['summary update', (store, generation) => store.setDocument('daily_summaries', '20 Acre|2026-09-22', { shop: '20 Acre', date: '2026-09-22', purchaseQty: { __increment: 3 } }, true, owner, generation)],
+  ['record deletion', (store, generation) => store.deleteDocument('purchases', 'purchase-1', owner, generation)],
+];
+
+for (const [name, mutate] of ledgerMutations) {
+  test(`a stale or unversioned ${name} cannot alter the ledger after reset`, async () => {
+    for (const generation of [undefined, 'initial', 'older-reset']) {
+      const seed = { '_system/ledger': { generation: 'reset-1', status: 'active' }, 'purchases/purchase-1': record() };
+      const { store, records } = fakeDatabase(seed);
+      await assert.rejects(mutate(store, generation), error => error.status === 409 && error.code === 'ledger-reset');
+      assert.deepEqual(Object.fromEntries(records), seed, 'Rejected writes leave all ledger data unchanged');
+    }
+  });
+
+  test(`maintenance blocks ${name} even with the current generation`, async () => {
+    const seed = { '_system/ledger': { generation: 'reset-1', status: 'resetting' }, 'purchases/purchase-1': record() };
+    const { store, records } = fakeDatabase(seed);
+    await assert.rejects(mutate(store, 'reset-1'), status(503));
+    assert.deepEqual(Object.fromEntries(records), seed);
+  });
+
+  test(`${name} succeeds with the current ledger generation`, async () => {
+    const { store } = fakeDatabase({ '_system/ledger': { generation: 'reset-1', status: 'active' }, 'purchases/purchase-1': record() });
+    await mutate(store, 'reset-1');
+  });
+
+  test(`a reset immediately before ${name} commits cannot be bypassed by an earlier generation check`, async () => {
+    const ledger = { generation: 'initial', status: 'active' };
+    const { store, records } = fakeDatabase({ '_system/ledger': ledger, 'purchases/purchase-1': record() }, {
+      beforeTransaction: records => records.set('_system/ledger', { generation: 'reset-1', status: 'active' }),
+    });
+    await assert.rejects(mutate(store, 'initial'), error => error.status === 409 && error.code === 'ledger-reset');
+    assert.deepEqual(records.get('purchases/purchase-1'), record());
+    assert.equal(records.has('sales/purchase-1'), false);
+    assert.equal(records.has('daily_summaries/20 Acre|2026-09-22'), false);
+  });
+}
+
+test('an offline submission cannot recreate a transaction deleted by a completed ledger reset', async () => {
+  const { store, records } = fakeDatabase({ '_system/ledger': { generation: 'reset-1', status: 'active' } });
+  await assert.rejects(store.createTransaction('purchases', record(), owner, 'initial'), error => error.status === 409 && error.code === 'ledger-reset');
+  assert.equal(records.has('purchases/purchase-1'), false);
+  assert.equal(records.has('daily_summaries/20 Acre|2026-09-22'), false);
+});
+
+test('new purchases still persist with their summary after the reset completes', async () => {
+  const { store, records } = fakeDatabase({ '_system/ledger': { generation: 'reset-1', status: 'active' } });
+  await store.createTransaction('purchases', record(), owner, 'reset-1');
+  assert.equal(records.get('purchases/purchase-1').qty, 3);
+  assert.equal(records.get('daily_summaries/20 Acre|2026-09-22').shop, '20 Acre');
 });

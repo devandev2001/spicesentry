@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { withLedgerTransaction } from '../server/ledger.mjs';
 
 const GSHEET_URL = process.env.GSHEET_URL || 'https://script.google.com/macros/s/AKfycbzWGVOetrbZMaN0XSKV94Yj_5HXKg2GwpFB8WPXwrtLZqt0HTAz9oBWs3TKxq7KtqypAQ/exec';
 const DRY_RUN = process.argv.includes('--write') ? false : true;
@@ -27,6 +28,8 @@ function normalize(item) {
 async function main() {
   const app = initializeApp({ credential: applicationDefault() });
   const db = getFirestore(app);
+  const ledger = await db.collection('_system').doc('ledger').get();
+  if (ledger.exists && ledger.data().generation !== 'initial') throw new Error('This ledger was reset. Legacy spreadsheet backfill is disabled to prevent restoring cleared entries.');
   const res = await fetch(GSHEET_URL, { redirect: 'follow' });
   if (!res.ok) throw new Error(`Sheet fetch failed: ${res.status}`);
   const data = await res.json();
@@ -42,7 +45,9 @@ async function main() {
     if (existing.exists) { skipped += 1; continue; }
     writes += 1;
     if (!DRY_RUN) {
-      await docRef.set({ ...entry, txId, kind: 'entry', mirrorStatus: 'backfilled', backfilledAt: new Date().toISOString() }, { merge: true });
+      await withLedgerTransaction(db, 'initial', async transaction => {
+        if (!(await transaction.get(docRef)).exists) transaction.set(docRef, { ...entry, txId, kind: 'entry', mirrorStatus: 'backfilled', backfilledAt: new Date().toISOString() }, { merge: true });
+      });
     }
   }
   for (const sale of sales) {
@@ -52,7 +57,9 @@ async function main() {
     if (existing.exists) { skipped += 1; continue; }
     writes += 1;
     if (!DRY_RUN) {
-      await docRef.set({ ...sale, txId, kind: 'sale', mirrorStatus: 'backfilled', backfilledAt: new Date().toISOString() }, { merge: true });
+      await withLedgerTransaction(db, 'initial', async transaction => {
+        if (!(await transaction.get(docRef)).exists) transaction.set(docRef, { ...sale, txId, kind: 'sale', mirrorStatus: 'backfilled', backfilledAt: new Date().toISOString() }, { merge: true });
+      });
     }
   }
 

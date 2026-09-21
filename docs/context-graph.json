@@ -1,0 +1,540 @@
+{
+  "nodes": [
+    {
+      "id": "docs_project_context_document",
+      "label": "SpiceSentry project context",
+      "description": "Maintained architecture and decisions; update source-backed semantic facts when architecture changes.",
+      "file_type": "document",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:1"
+    },
+    {
+      "id": "docs_project_context_firestore",
+      "label": "Firestore primary ledger",
+      "description": "Primary business database: Google Cloud Firestore project kvs-traders, database (default). Purchases and sales are transaction collections; users and config retain identity and settings.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9"
+    },
+    {
+      "id": "docs_project_context_node_api",
+      "label": "Authenticated Node API",
+      "description": "Same-origin Node API accesses Firestore using server-only Firebase Admin credentials.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9"
+    },
+    {
+      "id": "docs_project_context_sessions",
+      "label": "Signed account sessions",
+      "description": "Four-digit PIN authentication produces an eight-hour HttpOnly session cookie. The server rechecks role, active state, and credential version; new/reset PINs use scrypt.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:15"
+    },
+    {
+      "id": "docs_project_context_account_boundaries",
+      "label": "Account and branch isolation",
+      "description": "Staff access is restricted to the assigned branch. Each data request carries the current tab expected account ID to reject stale-account tabs.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:15"
+    },
+    {
+      "id": "docs_project_context_durable_outbox",
+      "label": "Per-account durable submission outbox",
+      "description": "Complete submitted purchases and sales are synchronously saved to account- and ledger-generation-scoped localStorage before UI acknowledgement.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "rationale": "A rejected or unfinished remote write must not erase a newly acknowledged submission on normal same-browser reopening; clearing browser storage still loses unsynced records."
+    },
+    {
+      "id": "docs_project_context_staged_sync",
+      "label": "Durable transaction sync stages",
+      "description": "Durable stages are primary commit, spreadsheet mirror, and mirror-status confirmation. Failures remain visible and retry on foreground or reconnection.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17"
+    },
+    {
+      "id": "docs_project_context_atomic_commit",
+      "label": "Atomic idempotent primary commit",
+      "description": "The server creates a primary record and Asia/Kolkata daily summary atomically, reusing the original record ID. Lost-response retries must not duplicate a record or increment totals again.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17"
+    },
+    {
+      "id": "docs_project_context_daily_summary",
+      "label": "Derived branch/day summaries",
+      "description": "Firestore daily_summaries stores derived branch/day totals alongside primary purchases and sales.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9"
+    },
+    {
+      "id": "docs_project_context_sheets_mirror",
+      "label": "Google Sheets reporting mirror",
+      "description": "An external Apps Script receives reporting copies. The deployed write handler is absent from the repository; exactly-once delivery depends on that handler deduplicating stable transaction IDs.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:11"
+    },
+    {
+      "id": "docs_project_context_cache_isolation",
+      "label": "Account and generation scoped display caches",
+      "description": "Display caches and outbox keys isolate accounts and ledger generations. Inactive enqueue and old-tab pagehide writes cannot repopulate the current generation. Caches are not backups.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:19"
+    },
+    {
+      "id": "docs_project_context_branch_retirement",
+      "label": "Kallar retirement",
+      "description": "Supported branches after the requested retirement are 20 Acre and Anachal. Kallar is retired; selectors, API validation, seed configuration, voice parsing, and integration catalogues must agree.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:7"
+    },
+    {
+      "id": "docs_project_context_ledger_reset",
+      "label": "Ledger reset lifecycle",
+      "description": "Completed user-authorized reset on 21 September 2026: deleted 139 Firestore purchases, 7 sales, 21 daily summaries; cleared 242 spreadsheet purchase rows and 8 sale rows. Both stores verified empty; all five accounts retained. Ledger reopened at12:42:11 UTC. Private backups remain outside the repository.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:23",
+      "rationale": "Reset requires a private backup outside the repository, blocked writes during maintenance, and verified empty target collections before writes reopen. Independently retained spreadsheet mirrors must be documented."
+    },
+    {
+      "id": "docs_project_context_ledger_generation",
+      "label": "Ledger generation and invalidation",
+      "description": "Firestore _system/ledger generation is checked inside each business-write transaction. Client caches and pending queues are scoped by account and generation; inactive enqueue and pagehide writes are guarded. The external Apps Script remains a separate direct-writer limitation.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:25"
+    },
+    {
+      "id": "docs_project_context_graph_context",
+      "label": "Graph context versus business ledger",
+      "description": "Graphify artifacts provide source navigation, not a business database or backup. The local allowlist-based refresh merges checked-in semantic facts without model API calls or live database reads; verify findings against source files.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:3"
+    },
+    {
+      "id": "docs_project_context_hosting",
+      "label": "Node hosting requirement",
+      "description": "Development runs the frontend and same-origin API at localhost:5173. Production needs build plus a Node service, HTTPS APP_ORIGIN, private session secret, and server Firebase credentials. A static dist upload cannot provide login.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:29"
+    },
+    {
+      "id": "docs_project_context_historical_validation",
+      "label": "Historical verification snapshots",
+      "description": "The login and storage recovery documents contain historical test, build, lint, and browser results. Present validation must use current command output; local checks or a Git push do not establish public deployment.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:31"
+    },
+    {
+      "id": "docs_project_context_separate_mongodb",
+      "label": "Separate optional MCP MongoDB integration",
+      "description": "The optional mcp-server uses MongoDB separately from the web application primary Firestore ledger.",
+      "file_type": "concept",
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:11"
+    },
+    {
+      "id": "server_api",
+      "label": "server/api.mjs",
+      "description": "Named server API implementation file.",
+      "file_type": "code",
+      "source_file": "server/api.mjs",
+      "source_location": "L1",
+      "documentation_source": "docs/project-context.md:9"
+    },
+    {
+      "id": "server_store",
+      "label": "server/store.mjs",
+      "description": "Named server Firestore access implementation file.",
+      "file_type": "code",
+      "source_file": "server/store.mjs",
+      "source_location": "L1",
+      "documentation_source": "docs/project-context.md:9"
+    },
+    {
+      "id": "src_authcontext",
+      "label": "src/AuthContext.jsx",
+      "description": "Named frontend session-restoration implementation file.",
+      "file_type": "code",
+      "source_file": "src/AuthContext.jsx",
+      "source_location": "L1",
+      "documentation_source": "docs/project-context.md:15"
+    },
+    {
+      "id": "src_api",
+      "label": "src/api.js",
+      "description": "Named frontend API/session-restoration implementation file.",
+      "file_type": "code",
+      "source_file": "src/api.js",
+      "source_location": "L1",
+      "documentation_source": "docs/project-context.md:15"
+    },
+    {
+      "id": "src_pending_transactions",
+      "label": "src/pending-transactions.js",
+      "description": "Named synchronous durable-outbox implementation file.",
+      "file_type": "code",
+      "source_file": "src/pending-transactions.js",
+      "source_location": "L1",
+      "documentation_source": "docs/project-context.md:17"
+    },
+    {
+      "id": "src_usetransactionsync",
+      "label": "src/useTransactionSync.js",
+      "description": "Named durable transaction-sync implementation file.",
+      "file_type": "code",
+      "source_file": "src/useTransactionSync.js",
+      "source_location": "L1",
+      "documentation_source": "docs/project-context.md:17"
+    }
+  ],
+  "edges": [
+    {
+      "source": "server_api",
+      "target": "docs_project_context_node_api",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9",
+      "weight": 1.0
+    },
+    {
+      "source": "server_store",
+      "target": "docs_project_context_node_api",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_node_api",
+      "target": "docs_project_context_firestore",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_node_api",
+      "target": "docs_project_context_sessions",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/login-recovery.md",
+      "source_location": "docs/login-recovery.md:5",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_node_api",
+      "target": "docs_project_context_account_boundaries",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/login-recovery.md",
+      "source_location": "docs/login-recovery.md:7",
+      "weight": 1.0
+    },
+    {
+      "source": "src_authcontext",
+      "target": "docs_project_context_sessions",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:15",
+      "weight": 1.0
+    },
+    {
+      "source": "src_api",
+      "target": "docs_project_context_sessions",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:15",
+      "weight": 1.0
+    },
+    {
+      "source": "src_pending_transactions",
+      "target": "docs_project_context_durable_outbox",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "weight": 1.0
+    },
+    {
+      "source": "src_usetransactionsync",
+      "target": "docs_project_context_staged_sync",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_staged_sync",
+      "target": "docs_project_context_durable_outbox",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_staged_sync",
+      "target": "docs_project_context_atomic_commit",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_staged_sync",
+      "target": "docs_project_context_sheets_mirror",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_atomic_commit",
+      "target": "docs_project_context_firestore",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/storage-and-recovery.md",
+      "source_location": "docs/storage-and-recovery.md:27",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_atomic_commit",
+      "target": "docs_project_context_daily_summary",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:17",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_daily_summary",
+      "target": "docs_project_context_firestore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:9",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_durable_outbox",
+      "target": "docs_project_context_account_boundaries",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/login-recovery.md",
+      "source_location": "docs/login-recovery.md:15",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_cache_isolation",
+      "target": "docs_project_context_account_boundaries",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/login-recovery.md",
+      "source_location": "docs/login-recovery.md:15",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_cache_isolation",
+      "target": "docs_project_context_firestore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:19",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_ledger_reset",
+      "target": "docs_project_context_firestore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:23",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_ledger_reset",
+      "target": "docs_project_context_daily_summary",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:23",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_ledger_generation",
+      "target": "docs_project_context_ledger_reset",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:25",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_ledger_generation",
+      "target": "docs_project_context_durable_outbox",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:25",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_ledger_generation",
+      "target": "docs_project_context_cache_isolation",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:25",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_ledger_reset",
+      "target": "docs_project_context_sheets_mirror",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:25",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_graph_context",
+      "target": "docs_project_context_firestore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:11",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_graph_context",
+      "target": "docs_project_context_document",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:50",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_hosting",
+      "target": "docs_project_context_node_api",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:29",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_historical_validation",
+      "target": "docs_project_context_hosting",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:29",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_document",
+      "target": "docs_project_context_branch_retirement",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:7",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_document",
+      "target": "docs_project_context_separate_mongodb",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:11",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_document",
+      "target": "docs_project_context_historical_validation",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:31",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_document",
+      "target": "docs_project_context_ledger_reset",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:23",
+      "weight": 1.0
+    },
+    {
+      "source": "docs_project_context_document",
+      "target": "docs_project_context_graph_context",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/project-context.md",
+      "source_location": "docs/project-context.md:42",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "token_usage_note": "Host-session token usage unavailable; no external model API calls."
+}

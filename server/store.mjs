@@ -5,8 +5,9 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { apiError } from './api.mjs';
 import { credentialVersion, hashPin } from './auth.mjs';
+import { readLedgerState, withLedgerTransaction } from './ledger.mjs';
 
-const shops = ['20 Acre', 'Anachal', 'Kallar'];
+const shops = ['20 Acre', 'Anachal'];
 const spices = ['cardamom', 'pepper', 'nutmeg', 'nutmeg_mace', 'coffee', 'clove'];
 const recordFields = new Set(['id', 'txId', 'kind', 'shop', 'type', 'qty', 'price', 'sellPrice', 'totalValue', 'date', 'loadId', 'buyerName', 'mirrorStatus', 'mirrorError', 'updatedAt', 'deleted', 'deletedAt', 'createdBy']);
 const ownerOnly = user => { if (user.role !== 'owner') throw apiError(403, 'Only an owner can change this record.'); };
@@ -36,6 +37,7 @@ export function createStore(db) {
   const listUsers = async () => (await db.collection('users').limit(500).get()).docs.map(doc => ({ ...doc.data(), uid: doc.id }));
   return {
     getUser, listUsers,
+    getLedgerState: () => readLedgerState(db),
     async changeOwnPin(uid, pin, expectedVersion) {
       const hashed = await hashPin(pin);
       return db.runTransaction(async transaction => {
@@ -65,9 +67,13 @@ export function createStore(db) {
       if (collection !== 'config') assertShop(user, snapshot.data().shop);
       return { id: snapshot.id, data: snapshot.data() };
     },
-    async setDocument(collection, id, data, merge, user) {
+    async setDocument(collection, id, data, merge, user, generation) {
       const ref = db.collection(collection).doc(id);
-      if (collection === 'config') { ownerOnly(user); await ref.set(data, { merge }); return; }
+      if (collection === 'config') {
+        ownerOnly(user);
+        if (id === 'shops' && (!Array.isArray(data.list) || data.list.some(shop => typeof shop?.name !== 'string' || shop.name.trim().toLowerCase() === 'kallar'))) throw apiError(400, 'Kallar is no longer an available branch.');
+        await withLedgerTransaction(db, generation, transaction => transaction.set(ref, data, { merge })); return;
+      }
       if (collection === 'daily_summaries') {
         ownerOnly(user);
         if (!shops.includes(data.shop) || !/^\d{4}-\d{2}-\d{2}$/.test(data.date || '') || id !== `${data.shop}|${data.date}`) throw apiError(400, 'Invalid daily summary.');
@@ -79,9 +85,9 @@ export function createStore(db) {
           else if (Number.isFinite(value?.__increment) && value.__increment >= 0 && value.__increment < 1000000000) payload[key] = FieldValue.increment(value.__increment);
           else throw apiError(400, 'Invalid summary increment.');
         }
-        await ref.set(payload, { merge }); return;
+        await withLedgerTransaction(db, generation, transaction => transaction.set(ref, payload, { merge })); return;
       }
-      await db.runTransaction(async transaction => {
+      await withLedgerTransaction(db, generation, async transaction => {
         const snapshot = await transaction.get(ref);
         if (snapshot.exists) {
           assertShop(user, snapshot.data().shop);
@@ -98,13 +104,13 @@ export function createStore(db) {
         transaction.set(ref, { ...record, updatedAt: new Date().toISOString() }, { merge });
       });
     },
-    async deleteDocument(collection, id, user) { ownerOnly(user); await db.collection(collection).doc(id).delete(); },
-    async createTransaction(collection, input, user) {
+    async deleteDocument(collection, id, user, generation) { ownerOnly(user); await withLedgerTransaction(db, generation, transaction => transaction.delete(db.collection(collection).doc(id))); },
+    async createTransaction(collection, input, user, generation) {
       const record = validateRecord(collection, input.txId, input, user);
       const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(record.date));
       const kind = collection === 'purchases' ? 'purchase' : 'sale';
       const summary = { shop: record.shop, date: day, updatedAt: new Date().toISOString(), [`${kind}Qty`]: FieldValue.increment(record.qty), [`${kind}Value`]: FieldValue.increment(record.totalValue) };
-      await db.runTransaction(async transaction => {
+      await withLedgerTransaction(db, generation, async transaction => {
         const ref = db.collection(collection).doc(record.txId);
         const existing = await transaction.get(ref);
         if (existing.exists) { assertShop(user, existing.data().shop); return; }

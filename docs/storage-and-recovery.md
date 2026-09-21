@@ -8,12 +8,15 @@ The web app's primary database is Google Cloud Firestore in Firebase project **k
 | Firestore `sales` | One document per sale, including buyer and sale price | Primary sales ledger |
 | Firestore `daily_summaries` | Branch/day purchase and sale totals | Derived daily totals |
 | Firestore `users` and `config` | Current account records and administration settings | Existing identity/configuration model; earlier audit limitations still apply |
-| Browser localStorage `spicesentry_pending_v1:<user>:<transaction>` | Complete submitted purchase/sale, ID, destination, pending sync stage and last error | Durable device queue for submissions not fully acknowledged |
-| Browser localStorage `spice_entries`, `spice_sales`, `spice_shop_loads` | Cached screen data | Fast reopening; not an independent cloud backup |
+| Firestore `_system/ledger` | Current ledger generation and maintenance status | Reject stale submissions after an authorized reset |
+| Browser localStorage `spicesentry_pending_v2:<generation>:<user>:<transaction>` | Complete submitted purchase/sale, ID, destination, pending sync stage and last error | Durable device queue scoped to account and current ledger; v1 is the pre-reset format |
+| Browser localStorage `spice_entries:<user>:ledger:<generation>`, `spice_sales:<user>:ledger:<generation>`, `spice_shop_loads:<user>:ledger:<generation>` | Cached screen data | Fast reopening, isolated across accounts and resets; not an independent cloud backup |
 | Google Sheets through Apps Script | Mirrored purchase/sale data | Reporting/integration copy |
 | Optional MCP server's MongoDB database (default `spicesentry`) | `entries` and `dispatches` | Separate integration, not the web app's primary ledger |
 
 The WhatsApp script reads purchases from `Sheet1` and sales from `Sales` in its [configured reporting spreadsheet](https://docs.google.com/spreadsheets/d/1H_4Br3r1RePxAahV4RixHzsmVjSHqhQuT4JG-mXhPe8/edit). The Apps Script handler that accepts the web app's mirror writes is not present in this repository; its exact deployed configuration and duplicate-handling contract were not inspected.
+
+The authorized real-data reset and its verified counts are recorded in [the 21 September reset receipt](ledger-reset-2026-09-21.md). New ledger generations isolate old browser caches and queued writes. Graphify stores project context in `graphify-out/`; it does not store transactions.
 
 **Why a submitted entry disappeared**
 

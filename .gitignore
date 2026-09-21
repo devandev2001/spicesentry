@@ -27,3 +27,11 @@ kvs-traders-firebase-adminsdk*.json
 .cursor/mcp.json
 .env
 .env.local
+
+# Graphify machine-local caches; portable outputs and context are committed.
+graphify-out/.*
+graphify-out/cache/
+graphify-out/????-??-??/
+graphify-out/cost.json
+graphify-out/manifest.json
+scripts/__pycache__/

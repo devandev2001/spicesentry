@@ -6,7 +6,7 @@ import { createApi } from '../server/api.mjs';
 
 const PIN = '8642';
 const legacyHash = pin => createHash('sha256').update(`${pin}_kvs_salt_2026`).digest('hex');
-const safeUser = { uid: 'staff-1', name: 'Local Test Staff', role: 'staff', shop: 'Kallar', active: true };
+const safeUser = { uid: 'staff-1', name: 'Local Test Staff', role: 'staff', shop: '20 Acre', active: true };
 
 async function fixture(t, options = {}) {
   const users = new Map([
@@ -14,9 +14,11 @@ async function fixture(t, options = {}) {
     ['inactive-1', { ...safeUser, uid: 'inactive-1', active: false, pin: legacyHash(PIN) }],
   ]);
   const documents = new Map();
+  const ledger = { generation: 'initial', status: 'active' };
   let currentTime = Date.parse('2026-09-21T12:00:00.000Z');
   const store = {
     listUsers: async () => [...users.values()],
+    getLedgerState: async () => ({ ...ledger }),
     getUser: async uid => users.get(uid) ?? null,
     changeOwnPin: async (uid, pin, expectedVersion) => {
       const user = users.get(uid);
@@ -56,7 +58,7 @@ async function fixture(t, options = {}) {
     assert.ok(cookie, 'Successful login must set a session cookie');
     return { response, cookie: cookie.split(';')[0], setCookie: cookie };
   };
-  return { request, login, users, documents, baseUrl, advanceTime: milliseconds => { currentTime += milliseconds; } };
+  return { request, login, users, documents, ledger, baseUrl, advanceTime: milliseconds => { currentTime += milliseconds; } };
 }
 
 test('the login account picker exposes active user labels without credentials', async t => {
@@ -69,13 +71,13 @@ test('the login account picker exposes active user labels without credentials', 
 test('an existing legacy PIN opens a protected session without returning credential fields', async t => {
   const { login, request } = await fixture(t);
   const { response, cookie, setCookie } = await login();
-  assert.deepEqual(await response.json(), { user: safeUser });
+  assert.deepEqual(await response.json(), { user: safeUser, ledger: { generation: 'initial', status: 'active' } });
   assert.match(setCookie, /(?:^|;\s*)HttpOnly(?:;|$)/i);
   assert.match(setCookie, /(?:^|;\s*)SameSite=Strict(?:;|$)/i);
   assert.match(setCookie, /(?:^|;\s*)Path=\/(?:;|$)/i);
   const session = await request('/api/auth/session', { cookie });
   assert.equal(session.status, 200);
-  assert.deepEqual(await session.json(), { user: safeUser });
+  assert.deepEqual(await session.json(), { user: safeUser, ledger: { generation: 'initial', status: 'active' } });
 });
 
 test('accounts with the stronger scrypt format can sign in using the same PIN flow', async t => {
@@ -83,7 +85,7 @@ test('accounts with the stronger scrypt format can sign in using the same PIN fl
   const salt = '8ad901ea594402d5a6756ce9537a1d82';
   users.get(safeUser.uid).pin = `scrypt:${salt}:${scryptSync(PIN, salt, 64).toString('hex')}`;
   const { response } = await login();
-  assert.deepEqual(await response.json(), { user: safeUser });
+  assert.deepEqual(await response.json(), { user: safeUser, ledger: { generation: 'initial', status: 'active' } });
 });
 
 test('wrong PINs, unknown accounts, and inactive accounts cannot obtain sessions', async t => {
@@ -116,7 +118,7 @@ test('clients cannot promote themselves by sending a role during login', async t
     method: 'POST', body: { uid: safeUser.uid, pin: PIN, role: 'admin', active: true, shop: 'Other shop' },
   });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { user: safeUser });
+  assert.deepEqual(await response.json(), { user: safeUser, ledger: { generation: 'initial', status: 'active' } });
 });
 
 test('session verification rejects a missing or tampered authentication cookie', async t => {
@@ -168,7 +170,7 @@ test('business data requires a verified session and collection allowlisting', as
 
 test('transaction submission cannot write records without a verified session', async t => {
   const { request, login, documents } = await fixture(t);
-  const record = { id: 'purchase-test-1', txId: 'purchase-test-1', kind: 'entry', shop: 'Kallar', type: 'pepper', qty: 3, price: 125, totalValue: 375, date: '2026-09-21T12:00:00.000Z', loadId: 'test-load' };
+  const record = { id: 'purchase-test-1', txId: 'purchase-test-1', kind: 'entry', shop: '20 Acre', type: 'pepper', qty: 3, price: 125, totalValue: 375, date: '2026-09-21T12:00:00.000Z', loadId: 'test-load' };
   const body = { collection: 'purchases', record };
   assert.equal((await request('/api/data/commit', { method: 'POST', body })).status, 401);
   assert.equal(documents.size, 0);
@@ -215,7 +217,7 @@ test('five failed PIN attempts lock the account until the fifteen-minute rate wi
 test('a pending operation cannot run through a different account session after a browser account switch', async t => {
   const { request, login, documents } = await fixture(t);
   const { cookie } = await login();
-  const record = { id: 'old-account-purchase', txId: 'old-account-purchase', kind: 'entry', shop: 'Kallar', type: 'pepper', qty: 3, price: 125, date: '2026-09-21T12:00:00.000Z' };
+  const record = { id: 'old-account-purchase', txId: 'old-account-purchase', kind: 'entry', shop: '20 Acre', type: 'pepper', qty: 3, price: 125, date: '2026-09-21T12:00:00.000Z' };
   const response = await request('/api/data/commit', {
     method: 'POST', cookie, body: { collection: 'purchases', record, expectedUserId: 'previously-signed-in-user' },
   });
@@ -262,4 +264,26 @@ test('the own-PIN route cannot target another account or promote its caller', as
   assert.deepEqual(await response.json(), { user: safeUser });
   assert.equal(users.get('owner-1').pin, before);
   assert.equal(users.get(safeUser.uid).role, 'staff');
+});
+
+
+test('reset generations reach sign-in and reject stale reads, writes, and mirror preflights', async t => {
+  const { request, login, ledger, documents } = await fixture(t);
+  const { response, cookie } = await login();
+  assert.equal((await response.json()).ledger.generation, 'initial');
+  Object.assign(ledger, { generation: 'reset-1' });
+  for (const operation of ['query', 'set', 'commit', 'delete', 'check']) {
+    const response = await request(`/api/data/${operation}`, { method: 'POST', cookie, body: { collection: 'purchases', ledgerGeneration: 'initial' } });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).code, 'ledger-reset');
+  }
+  assert.equal(documents.size, 0);
+  const resumed = await request('/api/auth/session', { cookie });
+  assert.equal((await resumed.json()).ledger.generation, 'reset-1');
+  const fresh = await request('/api/data/query', { method: 'POST', cookie, body: { collection: 'purchases', ledgerGeneration: 'reset-1' } });
+  assert.equal(fresh.status, 200);
+  ledger.status = 'resetting';
+  const paused = await request('/api/data/check', { method: 'POST', cookie, body: { collection: 'purchases', ledgerGeneration: 'reset-1' } });
+  assert.equal(paused.status, 503);
+  assert.equal((await paused.json()).code, 'ledger-maintenance');
 });
