@@ -1,11 +1,11 @@
 import React, { Suspense, lazy, useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { Home, PlusCircle, Clock, Truck, Download, TrendingUp, Filter, ShoppingBag, Trash2, ArrowRightLeft, Eye, CalendarDays, BarChart3, HardDriveDownload, Mic, MicOff, Pencil, Settings, LogOut, Menu, X } from 'lucide-react';
 import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'date-fns';
-import { useAuth } from './AuthContext';
+import { useAuth } from './auth-context';
 import { db, collection, doc, getDocs, setDoc, query, where, orderBy, limit, increment } from './firebase';
 import LoginPage from './LoginPage';
 import { useTransactionSync } from './useTransactionSync';
-import { mergeTransactionRows } from './pending-transactions';
+import { mergeTransactionRows, transactionCacheKey } from './pending-transactions';
 const CPanel = lazy(() => import('./CPanel'));
 
 // ── Toast Notification System ──
@@ -141,24 +141,28 @@ function MainApp() {
     user: currentUser,
     isOwner,
     logout,
-    login,
-    updateUser,
+    changePin,
     setupBiometric,
     clearBiometricEnrollment,
     hasBiometricEnrollment,
     canUseBiometric,
   } = useAuth();
+  const availableShops = useMemo(() => isOwner ? SHOPS : SHOPS.filter(shop => shop === currentUser.shop), [isOwner, currentUser.shop]);
   const { pendingTransactions, queueTransaction, readPendingTransactions, retryTransactions } = useTransactionSync(currentUser.uid, GSHEET_URL);
+  const entriesStorageKey = transactionCacheKey('spice_entries', currentUser.uid);
+  const salesStorageKey = transactionCacheKey('spice_sales', currentUser.uid);
+  const loadsStorageKey = transactionCacheKey('spice_shop_loads', currentUser.uid);
   const [activeTab, setActiveTab] = useState('dashboard');
   const shopStorageKey = `spicesentry_shop:${currentUser.uid}`;
   const [selectedShop, updateSelectedShop] = useState(() => {
-    try { return localStorage.getItem(shopStorageKey) || currentUser.shop || SHOPS[0]; }
-    catch { return currentUser.shop || SHOPS[0]; }
+    try { const cached = localStorage.getItem(shopStorageKey); return availableShops.includes(cached) ? cached : availableShops[0] || ''; }
+    catch { return availableShops[0] || ''; }
   });
   const setSelectedShop = useCallback((shop) => {
+    if (!availableShops.includes(shop)) return;
     try { localStorage.setItem(shopStorageKey, shop); } catch { /* Navigation still works when storage is full. */ }
     updateSelectedShop(shop);
-  }, [shopStorageKey]);
+  }, [shopStorageKey, availableShops]);
   const refreshInFlight = useRef(null);
   const latestRefresh = useRef(null);
   const [syncing, setSyncing] = useState(false);
@@ -187,17 +191,17 @@ function MainApp() {
   // Data State — load from localStorage INSTANTLY, then refresh from Sheets
   const [entries, setEntries] = useState(() => {
     let cached = [];
-    try { cached = JSON.parse(localStorage.getItem('spice_entries') || '[]'); } catch { /* Keep pending records. */ }
+    try { cached = JSON.parse(localStorage.getItem(entriesStorageKey) || '[]'); } catch { /* Keep pending records. */ }
     return mergeTransactionRows(cached, [], readPendingTransactions().filter(op => op.firestoreCollection === 'purchases'));
   });
   const [sales, setSales] = useState(() => {
     let cached = [];
-    try { cached = JSON.parse(localStorage.getItem('spice_sales') || '[]'); } catch { /* Keep pending records. */ }
+    try { cached = JSON.parse(localStorage.getItem(salesStorageKey) || '[]'); } catch { /* Keep pending records. */ }
     return mergeTransactionRows(cached, [], readPendingTransactions().filter(op => op.firestoreCollection === 'sales'));
   });
   const [shopLoads, setShopLoads] = useState(() => {
     try {
-      const cached = JSON.parse(localStorage.getItem('spice_shop_loads') || '{}');
+      const cached = JSON.parse(localStorage.getItem(loadsStorageKey) || '{}');
       return Object.keys(cached).length > 0 ? { ...buildDefaultLoads(), ...cached } : buildDefaultLoads();
     } catch { return buildDefaultLoads(); }
   });
@@ -293,65 +297,11 @@ function MainApp() {
     }
   };
 
-  const refreshFromSheets = async (silent = false) => {
-    if (!silent) setSyncing(true);
-    try {
-      const res = await fetch(GSHEET_URL, { redirect: 'follow' });
-      if (!res.ok) throw new Error('Network error ' + res.status);
-      const data = await res.json();
-
-      // Only overwrite if sheet actually returned non-empty arrays.
-      // Empty arrays from Apps Script (quota, parse error, etc.) would otherwise wipe local data.
-      const tombstoneIds = new Set(Object.keys(tombstones));
-      if (Array.isArray(data.entries) && data.entries.length > 0) {
-        const remote = data.entries.map(normalizeShop);
-        setEntries(prev => mergeRows(remote, prev, tombstoneIds, 'purchases'));
-      }
-      if (Array.isArray(data.sales) && data.sales.length > 0) {
-        const remote = data.sales.map(normalizeShop);
-        setSales(prev => mergeRows(remote, prev, tombstoneIds, 'sales'));
-      }
-
-      // Build loads: use sheet loads if available, otherwise derive from entries
-      let resolvedLoads = {};
-      if (data.loads && Object.keys(data.loads).length > 0) {
-        // Mark loads from sheet so we know to filter by loadId
-        Object.entries(data.loads).forEach(([key, val]) => {
-          const normKey = key.replace('KVS Anachal', 'Anachal');
-          resolvedLoads[normKey] = { ...val, _fromSheet: true };
-        });
-      } else {
-        // No loads in sheet — derive from entries but mark as NOT from sheet
-        const allItems = [...(data.entries || []).map(normalizeShop), ...(data.sales || []).map(normalizeShop)];
-        allItems.forEach(item => {
-          if (item.shop && item.type && item.loadId) {
-            const key = `${item.shop}|${item.type}`;
-            if (!resolvedLoads[key]) {
-              resolvedLoads[key] = { id: item.loadId.toString(), start: new Date(item.date).getTime() || Date.now(), _fromSheet: false };
-            }
-          }
-        });
-      }
-      if (Object.keys(resolvedLoads).length > 0) {
-        setShopLoads(prev => ({ ...prev, ...resolvedLoads }));
-      }
-
-      setLastSync(new Date());
-      return true;
-    } catch (err) {
-      console.warn('Sheet sync failed:', err);
-      return false;
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const refreshData = (silent = false) => {
     if (!navigator.onLine) return Promise.resolve();
     if (refreshInFlight.current) return refreshInFlight.current;
     const request = (async () => {
-      const ok = await refreshFromFirestore(silent);
-      if (!ok) await refreshFromSheets(silent);
+      await refreshFromFirestore(silent);
     })().finally(() => { refreshInFlight.current = null; });
     refreshInFlight.current = request;
     return request;
@@ -390,9 +340,9 @@ function MainApp() {
   useEffect(() => {
     const save = () => {
       try {
-        localStorage.setItem('spice_entries', JSON.stringify(entries));
-        localStorage.setItem('spice_sales', JSON.stringify(sales));
-        localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
+        localStorage.setItem(entriesStorageKey, JSON.stringify(entries));
+        localStorage.setItem(salesStorageKey, JSON.stringify(sales));
+        localStorage.setItem(loadsStorageKey, JSON.stringify(shopLoads));
       } catch (error) {
         console.warn('Could not update cached inventory; pending entries are retained.', error);
       }
@@ -406,7 +356,7 @@ function MainApp() {
       window.removeEventListener('pagehide', save);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [entries, sales, shopLoads]);
+  }, [entries, sales, shopLoads, entriesStorageKey, salesStorageKey, loadsStorageKey]);
 
   // Derived state: per-spice stats for the selected shop
   const stats = useMemo(() => SPICES.map(spice => {
@@ -455,7 +405,7 @@ function MainApp() {
     let grandValue = 0;
     let grandSoldValue = 0;
     let grandSoldQty = 0;
-    const perShop = SHOPS.map(shop => {
+    const perShop = availableShops.map(shop => {
       const load = getLoad(shop, spice.id);
       const useLoadFilter = hasRealLoad(shop, spice.id);
       const se = entries.filter(e => e.shop === shop && e.type === spice.id && (!useLoadFilter || e.loadId === load.id));
@@ -483,7 +433,7 @@ function MainApp() {
       avgPrice: grandRemainingQty > 0 ? +(grandRemainingValue / grandRemainingQty).toFixed(2) : (grandQty > 0 ? +(grandValue / grandQty).toFixed(2) : 0),
       perShop,
     };
-  }), [entries, sales, shopLoads]);
+  }), [entries, sales, shopLoads, availableShops]);
 
   // Days since the oldest active spice load started for this shop
   const oldestLoadStart = SPICES.reduce((oldest, spice) => {
@@ -536,6 +486,7 @@ function MainApp() {
   };
 
   const handleAddEntry = async (entry) => {
+    if (!availableShops.includes(entry.shop)) throw new Error('Ask an owner to assign your account to this branch before recording purchases.');
     if (!Number.isFinite(entry.qty) || entry.qty <= 0 || entry.qty >= 1000000 || !Number.isFinite(entry.price) || entry.price <= 0 || entry.qty * entry.price >= 1000000000) {
       throw new Error('Enter a positive quantity and price within the supported limits.');
     }
@@ -561,6 +512,7 @@ function MainApp() {
   };
 
   const handleAddSale = async (sale) => {
+    if (!availableShops.includes(sale.shop)) throw new Error('Ask an owner to assign your account to this branch before recording sales.');
     if (!Number.isFinite(sale.qty) || sale.qty <= 0 || sale.qty >= 1000000 || !Number.isFinite(sale.sellPrice) || sale.sellPrice <= 0 || sale.qty * sale.sellPrice >= 1000000000) {
       throw new Error('Enter a positive quantity and sell price within the supported limits.');
     }
@@ -896,6 +848,7 @@ function MainApp() {
       )}
 
       <div className="content-area">
+      {availableShops.length === 0 && <div className="sync-status" role="alert">Your account has no branch assigned. Ask an owner to assign a branch before recording transactions.</div>}
       {/* Offline banner */}
       {isOffline && (
         <div className="sync-status" role="status" style={{
@@ -922,7 +875,7 @@ function MainApp() {
 
         {activeTab === 'cpanel' && isOwner ? (
           <Suspense fallback={<div className="page-section"><div className="spinner" /></div>}>
-            <CPanel onBack={() => goTo('dashboard')} shops={SHOPS} spices={SPICES} />
+            <CPanel onBack={() => goTo('dashboard')} shops={availableShops} spices={SPICES} />
           </Suspense>
         ) : (
           <>
@@ -930,7 +883,7 @@ function MainApp() {
               <Dashboard 
                 stats={stats} 
                 allBranchStats={allBranchStats}
-                shops={SHOPS}
+                shops={availableShops}
                 selectedShop={selectedShop}
                 onSelectShop={setSelectedShop}
                 days={daysSinceLoadStart}
@@ -945,13 +898,13 @@ function MainApp() {
                 isOwner={isOwner}
               />
             )}
-            {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} selectedShop={selectedShop} showToast={showToast} />}
-            {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} showToast={showToast} />}
+            {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={availableShops} spices={SPICES} selectedShop={selectedShop} showToast={showToast} />}
+            {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={availableShops} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} showToast={showToast} />}
             {activeTab === 'daily' && (
               <DailyPurchases
                 entries={entries}
                 sales={sales}
-                shops={SHOPS}
+                shops={availableShops}
                 spices={SPICES}
                 selectedShop={selectedShop}
                 onSelectShop={setSelectedShop}
@@ -963,7 +916,7 @@ function MainApp() {
                 sales={sales}
                 selectedShop={selectedShop}
                 onSelectShop={setSelectedShop}
-                shops={SHOPS}
+                shops={availableShops}
                 spices={SPICES}
                 shopLoads={shopLoads}
                 onDeleteEntry={isOwner ? handleDeleteEntry : undefined}
@@ -975,8 +928,7 @@ function MainApp() {
             {activeTab === 'mysettings' && (
               <MySettings
                 currentUser={currentUser}
-                login={login}
-                updateUser={updateUser}
+                changePin={changePin}
                 setupBiometric={setupBiometric}
                 clearBiometricEnrollment={clearBiometricEnrollment}
                 hasBiometricEnrollment={hasBiometricEnrollment}
@@ -1600,7 +1552,7 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
                       <span className="spice-avg-price" style={{ color: 'var(--primary-ctn)' }}>Sell: {formatINR(spice.avgSellPrice)}/kg</span>
                     )}
                   </div>
-                  {spice.totalQty > 0 && (
+                  {spice.totalQty > 0 && onDispatch && (
                     <button className="dispatch-btn" onClick={() => onDispatch(spice.id)}>
                       Dispatch
                     </button>
@@ -2021,8 +1973,7 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
 
 function MySettings({
   currentUser,
-  login,
-  updateUser,
+  changePin,
   setupBiometric,
   clearBiometricEnrollment,
   hasBiometricEnrollment,
@@ -2043,9 +1994,7 @@ function MySettings({
     if (!currentUser?.name) { showToast('No active user session.', 'error'); return; }
     setSavingPin(true);
     try {
-      const verify = await login(currentPin, currentUser.name);
-      if (!verify.ok) { showToast(verify.error || 'Current PIN is incorrect.', 'error'); return; }
-      await updateUser(currentUser.uid, { pin: newPin });
+      await changePin(currentPin, newPin);
       setCurrentPin('');
       setNewPin('');
       setConfirmPin('');
@@ -2115,7 +2064,7 @@ function MySettings({
           </p>
           {!canUseBiometric && (
             <p className="caption" style={{ color: 'var(--chili-lt)', marginBottom: '0.5rem' }}>
-              This browser/device does not support biometric login.
+              Use your PIN to sign in. Biometric login needs server verification.
             </p>
           )}
           <div className="submit-row" style={{ display: 'flex', gap: '0.6rem' }}>

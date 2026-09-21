@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './auth-context';
 import { db, collection, doc, getDocs, setDoc, updateDoc, deleteDoc } from './firebase';
 import { Trash2, Pencil, Eye, EyeOff, ShieldCheck, ShoppingBag, Plus, ArrowLeft, Users, Store, Leaf, Settings, BarChart3 } from 'lucide-react';
 
@@ -14,6 +14,7 @@ export default function CPanel({ onBack, shops, spices, onUpdateConfig }) {
   const { users, fetchUsers, addUser, updateUser, removeUser, resetPin, isOwner, user: currentUser, enrollBiometric, clearBiometricEnrollment, hasBiometricEnrollment, canUseBiometric } = useAuth();
   const [activeTab, setActiveTab] = useState('users');
   const [loaded, setLoaded] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState('');
 
   // Config from Firestore
   const [configShops, setConfigShops] = useState([]);
@@ -21,9 +22,9 @@ export default function CPanel({ onBack, shops, spices, onUpdateConfig }) {
   const [appSettings, setAppSettings] = useState({});
 
   useEffect(() => {
-    fetchUsers().then(() => setLoaded(true));
+    fetchUsers().catch(error => setUsersLoadError(error.message)).finally(() => setLoaded(true));
     loadConfig();
-  }, []);
+  }, [fetchUsers]);
 
   const loadConfig = async () => {
     try {
@@ -42,6 +43,10 @@ export default function CPanel({ onBack, shops, spices, onUpdateConfig }) {
 
   return (
     <div className="page-section cpanel">
+      {usersLoadError && <div className="login-error" role="alert">
+        {usersLoadError}
+        <button type="button" onClick={() => fetchUsers().then(() => setUsersLoadError('')).catch(error => setUsersLoadError(error.message))}>Retry loading users</button>
+      </div>}
       <div className="cpanel-header">
         <button onClick={onBack} className="cpanel-back-btn">
           <ArrowLeft size={18} />
@@ -113,7 +118,7 @@ function UsersPanel({ users, addUser, updateUser, removeUser, resetPin, shops, c
     e.preventDefault();
     if (!form.name.trim()) { setError('Name is required'); return; }
     if (!editingUid && (!form.pin || form.pin.length < 4)) { setError('PIN must be at least 4 digits'); return; }
-    if (form.pin && !/^\d{4,6}$/.test(form.pin)) { setError('PIN must be 4–6 digits'); return; }
+    if (form.pin && !/^\d{4}$/.test(form.pin)) { setError('PIN must be exactly 4 digits'); return; }
 
     setSaving(true);
     setError('');
@@ -144,7 +149,7 @@ function UsersPanel({ users, addUser, updateUser, removeUser, resetPin, shops, c
   };
 
   const handleResetPin = async () => {
-    if (!newPin || !/^\d{4,6}$/.test(newPin)) return;
+    if (!newPin || !/^\d{4}$/.test(newPin)) return;
     await resetPin(resetPinUid, newPin);
     setResetPinUid(null);
     setNewPin('');
@@ -170,7 +175,7 @@ function UsersPanel({ users, addUser, updateUser, removeUser, resetPin, shops, c
               </div>
               <div className="input-group">
                 <label className="form-label muted">{editingUid ? 'New PIN (leave blank to keep)' : 'PIN'}</label>
-                <input className="input-field" type="password" inputMode="numeric" maxLength={6} value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, '') }))} placeholder={editingUid ? '••••' : '4-6 digits'} />
+                <input className="input-field" type="password" inputMode="numeric" maxLength={4} value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, '') }))} placeholder={editingUid ? '••••' : '4 digits'} />
               </div>
               <div className="input-group">
                 <label className="form-label muted">Role</label>
@@ -246,8 +251,8 @@ function UsersPanel({ users, addUser, updateUser, removeUser, resetPin, shops, c
               Reset PIN for {users.find(u => u.uid === resetPinUid)?.name}
             </h3>
             <div className="input-group">
-              <label className="form-label muted">New PIN (4-6 digits)</label>
-              <input className="input-field" type="password" inputMode="numeric" maxLength={6} value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="Enter new PIN" />
+              <label className="form-label muted">New PIN (4 digits)</label>
+              <input className="input-field" type="password" inputMode="numeric" maxLength={4} value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="Enter new PIN" />
             </div>
             <div className="cpanel-form-actions" style={{ marginTop: '1rem' }}>
               <button className="cpanel-cancel-btn" onClick={() => { setResetPinUid(null); setNewPin(''); }}>Cancel</button>
@@ -516,7 +521,7 @@ function SettingsPanel({
         </p>
         {!canUseBiometric && (
           <p className="caption" style={{ color: 'var(--chili-lt)', marginBottom: '0.75rem' }}>
-            This browser/device does not support biometric WebAuthn.
+            Use your PIN to sign in. Biometric login is unavailable until server verification is configured.
           </p>
         )}
         <div className="cpanel-form-actions">

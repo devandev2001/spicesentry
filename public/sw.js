@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spicesentry-v1';
+const CACHE_NAME = 'spicesentry-v2';
 const PRECACHE = [
   '/',
   '/kvs-icon-192.png',
@@ -30,7 +30,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
 
   // Never cache Google Apps Script calls
-  if (request.url.includes('script.google.com')) return;
+  if (request.url.includes('script.google.com') || new URL(request.url).pathname.startsWith('/api/')) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {

@@ -1,63 +1,22 @@
-import { initializeApp } from 'firebase/app';
-import {
-  initializeFirestore,
-  memoryLocalCache,
-  collection,
-  doc,
-  getDocs,
-  getDoc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  orderBy,
-  writeBatch,
-  increment,
-  limit,
-  runTransaction,
-} from 'firebase/firestore';
+// The browser uses the authenticated application API. Firebase Admin credentials
+// and database authorization remain on the server.
+import { api } from './api';
 
-// Public web client config (same as Firebase Console). Env vars override when set.
-// Without this fallback, a missing .env (e.g. on another machine) connects nowhere → empty Firestore.
-const FIREBASE_PUBLIC = {
-  apiKey: 'AIzaSyCn3kh5xJJcMxYMjvxXPeaS2bf3dpVfM14',
-  authDomain: 'kvs-traders.firebaseapp.com',
-  projectId: 'kvs-traders',
-  storageBucket: 'kvs-traders.firebasestorage.app',
-  messagingSenderId: '78981430758',
-  appId: '1:78981430758:web:5147a76417dbee723f2a27',
-};
-
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || FIREBASE_PUBLIC.apiKey,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || FIREBASE_PUBLIC.authDomain,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || FIREBASE_PUBLIC.projectId,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || FIREBASE_PUBLIC.storageBucket,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || FIREBASE_PUBLIC.messagingSenderId,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || FIREBASE_PUBLIC.appId,
-};
-
-const app = initializeApp(firebaseConfig);
-
-// Memory cache avoids stale IndexedDB snapshots (sometimes showed 0 users after fixing config).
-const db = initializeFirestore(app, { localCache: memoryLocalCache() });
-
-export {
-  db,
-  collection,
-  doc,
-  getDocs,
-  getDoc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  orderBy,
-  writeBatch,
-  increment,
-  limit,
-  runTransaction,
-};
-export default app;
+export const db = {};
+export const collection = (_db, name) => ({ collection: name });
+export const doc = (parent, name, id) => id === undefined ? { ...parent, id: name } : { collection: name, id };
+export const where = (field, op, value) => ({ kind: 'where', field, op, value });
+export const orderBy = (field, direction = 'asc') => ({ kind: 'orderBy', field, direction });
+export const limit = count => ({ kind: 'limit', count });
+export const query = (ref, ...constraints) => ({ ...ref, constraints });
+export const increment = value => ({ __increment: value });
+const snapshot = document => ({ id: document?.id, exists: () => !!document, data: () => document?.data });
+export async function getDocs(ref) {
+  const { documents } = await api('data/query', ref);
+  return { docs: documents.map(snapshot) };
+}
+export async function getDoc(ref) { const { document } = await api('data/get', ref); return snapshot(document); }
+export const setDoc = (ref, data, options = {}) => api('data/set', { ...ref, data, merge: options.merge === true, expectedUserId: options.expectedUserId });
+export const updateDoc = (ref, data) => setDoc(ref, data, { merge: true });
+export const deleteDoc = ref => api('data/delete', ref);
+export const commitTransactionRecord = (collection, record, expectedUserId) => api('data/commit', { collection, record, expectedUserId });

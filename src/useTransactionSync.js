@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { db, doc, runTransaction, setDoc, increment } from './firebase';
-import { commitRecordOnce, createTransactionOutbox } from './pending-transactions';
+import { db, doc, setDoc, commitTransactionRecord } from './firebase';
+import { createTransactionOutbox } from './pending-transactions';
 
 export function useTransactionSync(userId, sheetUrl) {
   const [revision, setRevision] = useState(0);
@@ -8,21 +8,9 @@ export function useTransactionSync(userId, sheetUrl) {
   const outbox = useMemo(() => createTransactionOutbox({
     storage: localStorage,
     userId,
+    isActive: () => localStorage.getItem('spicesentry_cache_account') === userId,
     onChange: notify,
-    writePrimary: async ({ firestoreCollection, record }) => {
-      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(record.date));
-      const summary = { shop: record.shop, date: day, updatedAt: new Date().toISOString() };
-      const kind = firestoreCollection === 'purchases' ? 'purchase' : 'sale';
-      summary[`${kind}Qty`] = increment(record.qty);
-      summary[`${kind}Value`] = increment(record.totalValue);
-      await runTransaction(db, transaction => commitRecordOnce(
-        transaction,
-        doc(db, firestoreCollection, record.txId),
-        doc(db, 'daily_summaries', `${record.shop}|${day}`),
-        { ...record, mirrorStatus: 'pending', updatedAt: new Date().toISOString() },
-        summary,
-      ));
-    },
+    writePrimary: ({ firestoreCollection, record }) => commitTransactionRecord(firestoreCollection, record, userId),
     writeMirror: async ({ sheetPayload }) => {
       const response = await fetch(`${sheetUrl}?data=${encodeURIComponent(JSON.stringify(sheetPayload))}`, {
         redirect: 'follow', signal: AbortSignal.timeout(15000),
@@ -38,9 +26,10 @@ export function useTransactionSync(userId, sheetUrl) {
       }
     },
     markMirrored: async ({ firestoreCollection, record }) => {
-      await setDoc(doc(db, firestoreCollection, record.txId), { mirrorStatus: 'synced', updatedAt: new Date().toISOString() }, { merge: true });
+      await setDoc(doc(db, firestoreCollection, record.txId), { mirrorStatus: 'synced', updatedAt: new Date().toISOString() }, { merge: true, expectedUserId: userId });
     },
   }), [userId, sheetUrl, notify]);
+  useEffect(() => { outbox.resume(); return () => outbox.pause(); }, [outbox]);
 
   const pendingTransactions = useMemo(() => {
     // revision is advanced by local writes and storage events in another tab.

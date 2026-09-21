@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './auth-context';
 
 const PIN_LENGTH = 4;
 
@@ -12,6 +12,9 @@ export default function LoginPage() {
   const [bioSetupSubmitting, setBioSetupSubmitting] = useState(false);
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const pinRefs = useRef([]);
   const cardRef = useRef(null);
 
@@ -30,12 +33,24 @@ export default function LoginPage() {
   }, [scrollCardIntoView]);
 
   useEffect(() => {
+    let cancelled = false;
     fetchUsers().then((list) => {
+      if (cancelled) return;
       const active = (list || []).filter((u) => u.active !== false);
       setUsers(active);
       if (active.length === 1) setSelectedUser(active[0]);
-    });
-  }, [fetchUsers]);
+    }).catch(() => {
+      if (!cancelled) setUsersError('Could not load accounts. Check your connection and retry.');
+    }).finally(() => { if (!cancelled) setUsersLoading(false); });
+    return () => { cancelled = true; };
+  }, [fetchUsers, loadAttempt]);
+  const retryUsers = () => {
+    setUsersLoading(true);
+    setUsersError('');
+    setSelectedUser(null);
+    setPin('');
+    setLoadAttempt(value => value + 1);
+  };
 
   const clearPin = useCallback(() => {
     setPin('');
@@ -50,7 +65,7 @@ export default function LoginPage() {
           setError('Please select who is logging in.');
           return;
         }
-        const result = await login(pinStr, selectedUser.name);
+        const result = await login(pinStr, selectedUser.uid);
         if (result.ok) {
           return;
         }
@@ -149,11 +164,17 @@ export default function LoginPage() {
             </div>
             <div className="login-disambig" role="region" aria-label="Select user">
               <p className="login-disambig-label">Select User</p>
+              {usersLoading && <p role="status" className="caption">Loading users…</p>}
+              {!usersLoading && (usersError || users.length === 0) && <div role="alert">
+                <p className="caption">{usersError || 'No active accounts are available. Ask the app administrator to enable your account.'}</p>
+                <button className="login-btn" type="button" onClick={retryUsers}>Retry loading users</button>
+              </div>}
               <div className="login-disambig-chips">
                 {users.map((u) => (
                   <button
                     key={u.uid}
                     type="button"
+                    aria-pressed={selectedUser?.uid === u.uid}
                     className="login-disambig-chip"
                     style={selectedUser?.uid === u.uid ? { borderColor: 'var(--amber)', background: 'var(--bg-high)' } : undefined}
                     onClick={() => { setSelectedUser(u); setError(''); }}
@@ -192,7 +213,7 @@ export default function LoginPage() {
                     onKeyDown={(e) => handlePinKeyDown(i, e)}
                     onFocus={scrollCardIntoView}
                     className={`pin-box ${pin[i] ? 'filled' : ''} ${error ? 'error' : ''}`}
-                    disabled={submitting}
+                    disabled={submitting || usersLoading || !selectedUser}
                     autoComplete={i === 0 ? 'one-time-code' : 'off'}
                     aria-label={`Digit ${i + 1} of ${PIN_LENGTH}`}
                     enterKeyHint={i === PIN_LENGTH - 1 ? 'go' : 'next'}

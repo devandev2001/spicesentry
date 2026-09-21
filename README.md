@@ -1,4 +1,12 @@
-# React + Vite
+# SpiceSentry
+
+Run `npm install` and `npm run dev`, then open `http://localhost:5173`. The development server includes the authenticated API and reads existing Firestore data using private server credentials.
+
+See [login recovery and server hosting](docs/login-recovery.md) for credential setup, production requirements, and verification. Production needs `npm run build` followed by `npm start` in a configured Node service; a static `dist/` deployment alone does not provide the API.
+
+Run `npm test` for authentication, authorization, transaction persistence, and retry regressions. The [application audit](docs/application-audit-2026-09-21.md) records the original findings; [storage and recovery](docs/storage-and-recovery.md) explains the submitted-entry fix.
+
+## Frontend tooling
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

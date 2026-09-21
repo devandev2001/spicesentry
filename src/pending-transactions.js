@@ -1,8 +1,11 @@
 // Each submitted record has its own durable key, so a queue flush cannot erase
 // a different record submitted while it is waiting for the network.
 const activeDrains = new Map();
+export const transactionCacheKey = (name, userId) => `${name}:${encodeURIComponent(userId)}`;
 
-export function createTransactionOutbox({ storage, userId, writePrimary, writeMirror, markMirrored = async () => {}, onChange = () => {} }) {
+export function createTransactionOutbox({ storage, userId, writePrimary, writeMirror, markMirrored = async () => {}, onChange = () => {}, isActive = () => true }) {
+  let enabled = true;
+  const active = () => enabled && isActive();
   const prefix = `spicesentry_pending_v1:${encodeURIComponent(userId)}:`;
   const keyFor = id => prefix + encodeURIComponent(id);
   const read = key => {
@@ -33,22 +36,25 @@ export function createTransactionOutbox({ storage, userId, writePrimary, writeMi
   };
   const process = async key => {
     let operation = read(key);
-    if (!operation) return;
+    if (!operation || !active()) return;
     try {
       if (!operation.primarySaved) {
         await writePrimary(operation);
         operation = { ...operation, primarySaved: true, stage: 'mirror', error: null };
         save(operation);
       }
+      if (!active()) return;
       if (!operation.mirrorSaved) {
         await writeMirror(operation);
         operation = { ...operation, mirrorSaved: true, stage: 'confirmation', error: null };
         save(operation);
       }
+      if (!active()) return;
       await markMirrored(operation);
+      if (!active()) return;
       // Keep an immediately usable snapshot before removing the durable outbox
       // item. This closes the reload gap before React's debounced cache runs.
-      const cacheKey = operation.firestoreCollection === 'purchases' ? 'spice_entries' : 'spice_sales';
+      const cacheKey = transactionCacheKey(operation.firestoreCollection === 'purchases' ? 'spice_entries' : 'spice_sales', userId);
       let rows = [];
       try {
         const cached = JSON.parse(storage.getItem(cacheKey) || '[]');
@@ -79,7 +85,7 @@ export function createTransactionOutbox({ storage, userId, writePrimary, writeMi
     activeDrains.set(prefix, drain);
     return drain;
   };
-  return { enqueue, pending, flush };
+  return { enqueue, pending, flush, pause: () => { enabled = false; }, resume: () => { enabled = true; } };
 }
 
 export function mergeTransactionRows(remote, local, pending, tombstones = new Set(), now = Date.now()) {
@@ -93,13 +99,4 @@ export function mergeTransactionRows(remote, local, pending, tombstones = new Se
   for (const row of remote) rows.set(row.id || row.txId, row);
   return [...rows.values()].filter(row => !row.deleted && !tombstones.has(row.id || row.txId))
     .sort((a, b) => new Date(b.date) - new Date(a.date));
-}
-
-// Creation and summary increment share a transaction. A retry after a lost
-// acknowledgement must neither increment twice nor overwrite a later edit.
-export async function commitRecordOnce(transaction, recordRef, summaryRef, record, summary) {
-  const existing = await transaction.get(recordRef);
-  if (existing.exists()) return;
-  transaction.set(recordRef, record);
-  transaction.set(summaryRef, summary, { merge: true });
 }

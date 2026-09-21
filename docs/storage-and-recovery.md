@@ -1,6 +1,6 @@
 **SpiceSentry record storage and recovery**
 
-The web app's primary database is Google Cloud Firestore in Firebase project **kvs-traders**, database **(default)**. This was checked against the local `VITE_FIREBASE_PROJECT_ID` setting and `src/firebase.js`. A deployment can override the build-time environment. Inspect records through the [Firebase Firestore console](https://console.firebase.google.com/project/kvs-traders/firestore/databases/-default-/data).
+The web app's primary database is Google Cloud Firestore in Firebase project **kvs-traders**, database **(default)**. The login recovery now accesses it through the authenticated Node API and the server's Firebase Admin credentials, verified against the existing database. Inspect records through the [Firebase Firestore console](https://console.firebase.google.com/project/kvs-traders/firestore/databases/-default-/data). See [login recovery and hosting requirements](login-recovery.md) for the current authentication path and validation; the following recovery-test results describe the earlier entry-persistence change.
 
 | Location | Stored data | Purpose |
 |---|---|---|
