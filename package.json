@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "vite",
     "seed": "node scripts/setup.mjs",
     "backfill:firestore:dry": "node scripts/backfill-sheet-to-firestore.mjs",

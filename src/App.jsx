@@ -4,6 +4,8 @@ import { format, differenceInDays, startOfMonth, subMonths, endOfMonth } from 'd
 import { useAuth } from './AuthContext';
 import { db, collection, doc, getDocs, setDoc, query, where, orderBy, limit, increment } from './firebase';
 import LoginPage from './LoginPage';
+import { useTransactionSync } from './useTransactionSync';
+import { mergeTransactionRows } from './pending-transactions';
 const CPanel = lazy(() => import('./CPanel'));
 
 // ── Toast Notification System ──
@@ -146,8 +148,19 @@ function MainApp() {
     hasBiometricEnrollment,
     canUseBiometric,
   } = useAuth();
+  const { pendingTransactions, queueTransaction, readPendingTransactions, retryTransactions } = useTransactionSync(currentUser.uid, GSHEET_URL);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [selectedShop, setSelectedShop] = useState(SHOPS[0]);
+  const shopStorageKey = `spicesentry_shop:${currentUser.uid}`;
+  const [selectedShop, updateSelectedShop] = useState(() => {
+    try { return localStorage.getItem(shopStorageKey) || currentUser.shop || SHOPS[0]; }
+    catch { return currentUser.shop || SHOPS[0]; }
+  });
+  const setSelectedShop = useCallback((shop) => {
+    try { localStorage.setItem(shopStorageKey, shop); } catch { /* Navigation still works when storage is full. */ }
+    updateSelectedShop(shop);
+  }, [shopStorageKey]);
+  const refreshInFlight = useRef(null);
+  const latestRefresh = useRef(null);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -173,10 +186,14 @@ function MainApp() {
 
   // Data State — load from localStorage INSTANTLY, then refresh from Sheets
   const [entries, setEntries] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('spice_entries') || '[]'); } catch { return []; }
+    let cached = [];
+    try { cached = JSON.parse(localStorage.getItem('spice_entries') || '[]'); } catch { /* Keep pending records. */ }
+    return mergeTransactionRows(cached, [], readPendingTransactions().filter(op => op.firestoreCollection === 'purchases'));
   });
   const [sales, setSales] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('spice_sales') || '[]'); } catch { return []; }
+    let cached = [];
+    try { cached = JSON.parse(localStorage.getItem('spice_sales') || '[]'); } catch { /* Keep pending records. */ }
+    return mergeTransactionRows(cached, [], readPendingTransactions().filter(op => op.firestoreCollection === 'sales'));
   });
   const [shopLoads, setShopLoads] = useState(() => {
     try {
@@ -238,29 +255,9 @@ function MainApp() {
     });
   };
 
-  // Merge remote rows with local rows, protecting recently-added local entries
-  // (last 6h) that may not yet have propagated to the remote source, OR that
-  // Firestore happens to omit on a particular read (network blip, partial result).
-  // Dedupes by id/txId — remote wins for older rows.
-  // Honors tombstones (locally-deleted IDs) so deleted entries don't resurrect.
-  const mergeRows = (remote, local, tombstoneIds) => {
-    const RECENT_MS = 6 * 60 * 60 * 1000; // 6 hours
-    const now = Date.now();
-    // Filter remote: drop anything we know is deleted locally
-    const remoteFiltered = tombstoneIds && tombstoneIds.size > 0
-      ? remote.filter(r => !tombstoneIds.has(r.id || r.txId))
-      : remote;
-    const remoteIds = new Set(remoteFiltered.map(r => r.id || r.txId));
-    // Keep local rows that are recent, not in remote, and not tombstoned
-    const recentLocalOnly = local.filter(l => {
-      const id = l.id || l.txId;
-      if (!id || remoteIds.has(id)) return false;
-      if (tombstoneIds && tombstoneIds.has(id)) return false;
-      const ts = new Date(l.date || 0).getTime();
-      return ts && (now - ts) < RECENT_MS;
-    });
-    return [...recentLocalOnly, ...remoteFiltered];
-  };
+  // Pending submissions survive reload and remain visible until acknowledged.
+  const mergeRows = (remote, local, tombstoneIds, firestoreCollection) =>
+    mergeTransactionRows(remote, local, readPendingTransactions().filter(op => op.firestoreCollection === firestoreCollection), tombstoneIds);
 
   const refreshFromFirestore = async (silent = false) => {
     if (!silent) setSyncing(true);
@@ -282,8 +279,8 @@ function MainApp() {
       const purchases = allPurchases.filter(r => !r.deleted);
       const saleRows = allSales.filter(r => !r.deleted);
       // Merge — keep optimistic local entries from the last 6h, honor tombstones
-      setEntries(prev => mergeRows(purchases, prev, tombstoneIds));
-      setSales(prev => mergeRows(saleRows, prev, tombstoneIds));
+      setEntries(prev => mergeRows(purchases, prev, tombstoneIds, 'purchases'));
+      setSales(prev => mergeRows(saleRows, prev, tombstoneIds, 'sales'));
       const loads = deriveLoadsFromItems([...purchases, ...saleRows]);
       if (Object.keys(loads).length > 0) setShopLoads(prev => ({ ...prev, ...loads }));
       setLastSync(new Date());
@@ -308,11 +305,11 @@ function MainApp() {
       const tombstoneIds = new Set(Object.keys(tombstones));
       if (Array.isArray(data.entries) && data.entries.length > 0) {
         const remote = data.entries.map(normalizeShop);
-        setEntries(prev => mergeRows(remote, prev, tombstoneIds));
+        setEntries(prev => mergeRows(remote, prev, tombstoneIds, 'purchases'));
       }
       if (Array.isArray(data.sales) && data.sales.length > 0) {
         const remote = data.sales.map(normalizeShop);
-        setSales(prev => mergeRows(remote, prev, tombstoneIds));
+        setSales(prev => mergeRows(remote, prev, tombstoneIds, 'sales'));
       }
 
       // Build loads: use sheet loads if available, otherwise derive from entries
@@ -349,53 +346,66 @@ function MainApp() {
     }
   };
 
-  const refreshData = async (silent = false) => {
-    // Firestore is the source of truth (consistent reads, instant).
-    // Sheets is a write-only mirror; only used as fallback if Firestore fails.
-    const ok = await refreshFromFirestore(silent);
-    if (!ok) await refreshFromSheets(silent);
+  const refreshData = (silent = false) => {
+    if (!navigator.onLine) return Promise.resolve();
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      const ok = await refreshFromFirestore(silent);
+      if (!ok) await refreshFromSheets(silent);
+    })().finally(() => { refreshInFlight.current = null; });
+    refreshInFlight.current = request;
+    return request;
   };
+  useEffect(() => { latestRefresh.current = refreshData; });
 
-  // ── Fetch on mount + periodic refresh ──
+  // Resume promptly after app switching/browser back, without background polling
+  // or overlapping reads. The ref also keeps current tombstones in refreshes.
   useEffect(() => {
-    refreshData();
-    const interval = setInterval(() => refreshData(true), 15000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // ── Flush offline queue when connectivity is restored ──
-  useEffect(() => {
-    const handleOnline = () => {
+    const resume = () => {
+      if (document.visibilityState === 'hidden' || !navigator.onLine) return;
       setIsOffline(false);
-      flushOfflineQueue().then(() => refreshData(true));
+      void latestRefresh.current(true);
+      void retryTransactions().then(() => latestRefresh.current(true));
+      void flushOfflineQueue();
     };
-    const handleOffline = () => setIsOffline(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    // Also flush on mount if online & queue exists
-    if (navigator.onLine) flushOfflineQueue();
+    const offline = () => setIsOffline(true);
+    void latestRefresh.current();
+    void retryTransactions();
+    const interval = setInterval(resume, 15000);
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('pageshow', resume);
+    window.addEventListener('online', resume);
+    window.addEventListener('offline', offline);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('pageshow', resume);
+      window.removeEventListener('online', resume);
+      window.removeEventListener('offline', offline);
     };
-  }, []);
+  }, [retryTransactions]);
 
-  // Debounced localStorage cache — only writes once every 5 seconds max
-  // Prevents lag from constant JSON serialization on every poll/update
+  // Full snapshots can be debounced; submitted records are already durable in
+  // the outbox. Flush snapshots when leaving so ordinary navigation stays fast.
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const save = () => {
       try {
         localStorage.setItem('spice_entries', JSON.stringify(entries));
         localStorage.setItem('spice_sales', JSON.stringify(sales));
         localStorage.setItem('spice_shop_loads', JSON.stringify(shopLoads));
-      } catch (e) {
-        // localStorage full — clear old cache
-        console.warn('localStorage full, clearing cache:', e);
-        localStorage.removeItem('spice_entries');
-        localStorage.removeItem('spice_sales');
+      } catch (error) {
+        console.warn('Could not update cached inventory; pending entries are retained.', error);
       }
-    }, 5000);
-    return () => clearTimeout(timer);
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') save(); };
+    const timer = setTimeout(save, 5000);
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [entries, sales, shopLoads]);
 
   // Derived state: per-spice stats for the selected shop
@@ -482,9 +492,11 @@ function MainApp() {
   }, Date.now());
   const daysSinceLoadStart = Math.max(1, differenceInDays(new Date(), new Date(oldestLoadStart)) + 1);
   const pendingSyncCount = useMemo(
-    () => Object.values(syncStateById).filter((s) => s === 'pending' || s === 'failed').length,
-    [syncStateById],
+    () => Object.values(syncStateById).filter((s) => s === 'pending' || s === 'failed').length + pendingTransactions.length,
+    [syncStateById, pendingTransactions],
   );
+  const pendingCloudCount = pendingTransactions.filter(op => !op.primarySaved).length;
+  const syncError = pendingTransactions.find(op => op.error)?.error;
 
   const updateDailySummary = async (record) => {
     const day = (record.date || new Date().toISOString()).slice(0, 10);
@@ -524,9 +536,12 @@ function MainApp() {
   };
 
   const handleAddEntry = async (entry) => {
+    if (!Number.isFinite(entry.qty) || entry.qty <= 0 || entry.qty >= 1000000 || !Number.isFinite(entry.price) || entry.price <= 0 || entry.qty * entry.price >= 1000000000) {
+      throw new Error('Enter a positive quantity and price within the supported limits.');
+    }
     const load = getLoad(entry.shop, entry.type);
     const date = entry.date || new Date().toISOString();
-    const txId = makeTxId('entry', { ...entry, date, loadId: load.id });
+    const txId = crypto.randomUUID();
     const newEntry = { 
       ...entry, 
       id: txId,
@@ -537,21 +552,21 @@ function MainApp() {
       totalValue: entry.qty * entry.price 
     };
     
+    queueTransaction({ firestoreCollection: 'purchases', record: newEntry, sheetPayload: newEntry });
     setEntries(prev => [newEntry, ...prev]);
     goTo('dashboard');
     setSelectedShop(entry.shop);
 
-    setTimeout(() => {
-      syncFirestoreAndSheet({ firestoreCollection: 'purchases', record: newEntry, sheetPayload: { ...newEntry, kind: 'entry' } })
-        .then(() => refreshData(true))
-        .catch(err => console.error("Error syncing purchase:", err));
-    }, 0);
+    void retryTransactions();
   };
 
   const handleAddSale = async (sale) => {
+    if (!Number.isFinite(sale.qty) || sale.qty <= 0 || sale.qty >= 1000000 || !Number.isFinite(sale.sellPrice) || sale.sellPrice <= 0 || sale.qty * sale.sellPrice >= 1000000000) {
+      throw new Error('Enter a positive quantity and sell price within the supported limits.');
+    }
     const load = getLoad(sale.shop, sale.type);
     const date = new Date().toISOString();
-    const txId = makeTxId('sale', { ...sale, date, loadId: load.id });
+    const txId = crypto.randomUUID();
     const newSale = {
       ...sale,
       id: txId,
@@ -562,18 +577,22 @@ function MainApp() {
       date,
     };
 
+    queueTransaction({ firestoreCollection: 'sales', record: newSale, sheetPayload: newSale });
     setSales(prev => [newSale, ...prev]);
     goTo('dashboard');
     setSelectedShop(sale.shop);
 
-    setTimeout(() => {
-      syncFirestoreAndSheet({ firestoreCollection: 'sales', record: newSale, sheetPayload: newSale })
-        .then(() => refreshData(true))
-        .catch(err => console.error("Error syncing sale:", err));
-    }, 0);
+    void retryTransactions();
+  };
+
+  const canChangeRecord = id => {
+    if (!readPendingTransactions().some(op => op.record.id === id)) return true;
+    showToast('This entry is still syncing. Retry sync before editing or deleting it.', 'warning');
+    return false;
   };
 
   const handleDeleteEntry = async (id) => {
+    if (!canChangeRecord(id)) return;
     if (await showConfirm('Delete this purchase entry?')) {
       addTombstone(id);
       setEntries(prev => prev.filter(e => e.id !== id));
@@ -585,6 +604,7 @@ function MainApp() {
   };
 
   const handleDeleteSale = async (id) => {
+    if (!canChangeRecord(id)) return;
     if (await showConfirm('Delete this sale entry?')) {
       addTombstone(id);
       setSales(prev => prev.filter(s => s.id !== id));
@@ -597,6 +617,7 @@ function MainApp() {
 
   // ── Edit Entry / Sale ──
   const handleEditEntry = async (id, updates) => {
+    if (!canChangeRecord(id)) return;
     // Update locally
     setEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
     await setDoc(doc(collection(db, 'purchases'), id.toString()), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
@@ -611,6 +632,7 @@ function MainApp() {
   };
 
   const handleEditSale = async (id, updates) => {
+    if (!canChangeRecord(id)) return;
     setSales(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
     await setDoc(doc(collection(db, 'sales'), id.toString()), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
     await postToSheet({ kind: 'delete_sale', id: id.toString() });
@@ -831,28 +853,6 @@ function MainApp() {
       )}
       <style>{`@keyframes syncPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
 
-      {/* Offline banner */}
-      {isOffline && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9998,
-          padding: '0.4rem 1rem', textAlign: 'center',
-          background: 'rgba(234,179,8,0.15)', borderBottom: '1px solid rgba(234,179,8,0.3)',
-          color: '#eab308', fontSize: '0.75rem', fontWeight: 600,
-        }}>
-          📡 Offline — changes saved locally, will sync when back online
-        </div>
-      )}
-      {pendingSyncCount > 0 && !isOffline && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9997,
-          padding: '0.35rem 1rem', textAlign: 'center',
-          background: 'rgba(59,130,246,0.14)', borderBottom: '1px solid rgba(59,130,246,0.3)',
-          color: '#93c5fd', fontSize: '0.75rem', fontWeight: 600,
-        }}>
-          Sync pending: {pendingSyncCount} transaction{pendingSyncCount > 1 ? 's' : ''}
-        </div>
-      )}
-
       {/* ── Custom Confirm Modal ── */}
       {confirmModal && (
         <div style={{
@@ -896,6 +896,30 @@ function MainApp() {
       )}
 
       <div className="content-area">
+      {/* Offline banner */}
+      {isOffline && (
+        <div className="sync-status" role="status" style={{
+          background: 'rgba(234,179,8,0.15)', borderBottom: '1px solid rgba(234,179,8,0.3)',
+          color: '#eab308',
+        }}>
+          Offline — submitted purchases and sales are kept on this device until they can sync.
+        </div>
+      )}
+      {pendingSyncCount > 0 && !isOffline && (
+        <div className="sync-status" role="status" aria-live="polite" style={{
+          background: 'rgba(59,130,246,0.14)', borderBottom: '1px solid rgba(59,130,246,0.3)',
+          color: '#93c5fd',
+        }}>
+          <span>
+          {pendingCloudCount > 0
+            ? `${pendingCloudCount} entr${pendingCloudCount === 1 ? 'y saved' : 'ies saved'} on this device — cloud sync pending.`
+            : pendingTransactions.length > 0 ? 'Saved to cloud — finishing spreadsheet sync.' : 'Transaction sync pending.'}
+          {syncError && <span className="sync-status-error">Could not sync: {syncError}</span>}
+          </span>
+          {pendingTransactions.length > 0 && <button type="button" onClick={() => { void retryTransactions(); }}>Retry sync</button>}
+        </div>
+      )}
+
         {activeTab === 'cpanel' && isOwner ? (
           <Suspense fallback={<div className="page-section"><div className="spinner" /></div>}>
             <CPanel onBack={() => goTo('dashboard')} shops={SHOPS} spices={SPICES} />
@@ -921,7 +945,7 @@ function MainApp() {
                 isOwner={isOwner}
               />
             )}
-            {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} showToast={showToast} />}
+            {activeTab === 'add' && <AddEntry onAdd={handleAddEntry} shops={SHOPS} spices={SPICES} selectedShop={selectedShop} showToast={showToast} />}
             {activeTab === 'sell' && <AddSale onSell={handleAddSale} shops={SHOPS} spices={SPICES} entries={entries} sales={sales} shopLoads={shopLoads} selectedShop={selectedShop} showToast={showToast} />}
             {activeTab === 'daily' && (
               <DailyPurchases
@@ -1351,8 +1375,20 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
+    let timer;
+    const tick = () => {
+      clearTimeout(timer);
+      if (document.visibilityState === 'hidden') return;
+      setNow(new Date());
+      timer = setTimeout(tick, 60000 - Date.now() % 60000);
+    };
+    // The display has minute precision; do not rerender every stock card each second.
+    timer = setTimeout(tick, 60000 - Date.now() % 60000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, []);
 
   // ── Backup Snapshot — download all data as CSV ──
@@ -1605,8 +1641,8 @@ function Dashboard({ stats, allBranchStats, shops, selectedShop, onSelectShop, d
   );
 }
 
-function AddEntry({ onAdd, shops, spices, showToast }) {
-  const [shop, setShop] = useState(shops[0]);
+function AddEntry({ onAdd, shops, spices, selectedShop, showToast }) {
+  const [shop, setShop] = useState(selectedShop || shops[0]);
   const [type, setType] = useState(spices[0].id);
   const [qty, setQty] = useState('');
   const [price, setPrice] = useState('');
@@ -1665,10 +1701,12 @@ function AddEntry({ onAdd, shops, spices, showToast }) {
     setSubmitting(true);
     try {
       await onAdd({ shop, type, qty: parseFloat(qty), price: parseFloat(price), date: new Date().toISOString() });
-      showToast(`Purchase recorded — ${parseFloat(qty)} kg added to ${shop}`, 'success');
+      showToast(`Purchase saved on this device — ${parseFloat(qty)} kg in ${shop}. Cloud sync pending.`, 'info');
       setQty('');
       setPrice('');
       setVoiceText('');
+    } catch (error) {
+      showToast(error.message || 'Could not save purchase. Your form has been kept.', 'error', 6000);
     } finally {
       setSubmitting(false);
     }
@@ -1819,10 +1857,12 @@ function AddSale({ onSell, shops, spices, entries, sales, shopLoads, selectedSho
     setSubmitting(true);
     try {
       await onSell({ shop, type, qty: parseFloat(qty), sellPrice: parseFloat(sellPrice), buyerName });
-      showToast(`Sale recorded — ${parseFloat(qty)} kg sold from ${shop}`, 'success');
+      showToast(`Sale saved on this device — ${parseFloat(qty)} kg from ${shop}. Cloud sync pending.`, 'info');
       setQty('');
       setSellPrice('');
       setBuyerName('');
+    } catch (error) {
+      showToast(error.message || 'Could not save sale. Your form has been kept.', 'error', 6000);
     } finally {
       setSubmitting(false);
     }

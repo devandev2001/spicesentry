@@ -15,6 +15,7 @@ import {
   writeBatch,
   increment,
   limit,
+  runTransaction,
 } from 'firebase/firestore';
 
 // Public web client config (same as Firebase Console). Env vars override when set.
@@ -57,5 +58,6 @@ export {
   writeBatch,
   increment,
   limit,
+  runTransaction,
 };
 export default app;
