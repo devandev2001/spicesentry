@@ -39,8 +39,11 @@ export default function LoginPage() {
       const active = (list || []).filter((u) => u.active !== false);
       setUsers(active);
       if (active.length === 1) setSelectedUser(active[0]);
-    }).catch(() => {
-      if (!cancelled) setUsersError('Could not load accounts. Check your connection and retry.');
+    }).catch((error) => {
+      if (!cancelled) {
+        const detail = error?.message ? ` ${error.message}` : '';
+        setUsersError(`Could not load accounts from the server API.${detail} If this is a Vercel deploy, confirm AUTH_SESSION_SECRET and FIREBASE_SERVICE_ACCOUNT_JSON are set, then redeploy.`);
+      }
     }).finally(() => { if (!cancelled) setUsersLoading(false); });
     return () => { cancelled = true; };
   }, [fetchUsers, loadAttempt]);
