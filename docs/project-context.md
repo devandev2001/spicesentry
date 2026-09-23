@@ -26,7 +26,7 @@ The implementation introduces a server ledger generation at `_system/ledger` and
 
 ## Running and validating
 
-`npm run dev` serves the frontend and same-origin API at `http://localhost:5173`. Production requires the same-origin API: either `npm run build` + `npm start` on a Node host, or Vercel with `api/[...path].mjs` + env `AUTH_SESSION_SECRET`, `FIREBASE_SERVICE_ACCOUNT_JSON`, and Production `APP_ORIGIN`. Use `/api/health` to confirm those env vars are present after deploy. A static `dist/` upload alone cannot support login. Local code validation and a Git push are not evidence of public deployment.
+`npm run dev` serves the frontend and same-origin API at `http://localhost:5173`. Production requires the same-origin API: either `npm run build` + `npm start` on a Node host, or Vercel with `api/run.mjs` + env `AUTH_SESSION_SECRET`, `FIREBASE_SERVICE_ACCOUNT_JSON`, and Production `APP_ORIGIN`. Use `/api/health` to confirm those env vars are present after deploy. A static `dist/` upload alone cannot support login. Local code validation and a Git push are not evidence of public deployment.
 
 Use `npm test`, `npm run build`, and scoped ESLint for changes. Synthetic browser checks must intercept API and Apps Script writes. Never seed, backfill, reset PINs, create test records in production, or run a ledger reset merely to test the UI. Read `docs/login-recovery.md` for the previous verified login baseline. `docs/storage-and-recovery.md` includes historical test/build figures; use current command output for present validation.
 

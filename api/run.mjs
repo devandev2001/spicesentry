@@ -34,27 +34,40 @@ function getHandler() {
       store: productionStore(),
       sessionSecret: process.env.AUTH_SESSION_SECRET,
       secureCookies: true,
-      // Fall back to request host when APP_ORIGIN is unset (preview/prod aliases).
       allowedOrigin: process.env.APP_ORIGIN || undefined,
     });
-    cached = serverless(app, {
-      binary: false,
-      request(request, event) {
-        // Catch-all routes may arrive as "/auth/users" instead of "/api/auth/users".
-        const raw = event.rawPath || event.path || request.url || '/';
-        if (raw === '/api' || raw.startsWith('/api/') || raw.startsWith('/api?')) {
-          request.url = event.rawQueryString ? `${raw}?${event.rawQueryString}` : raw;
-          return;
-        }
-        const withPrefix = raw.startsWith('/') ? `/api${raw}` : `/api/${raw}`;
-        request.url = event.rawQueryString ? `${withPrefix}?${event.rawQueryString}` : withPrefix;
-      },
-    });
+    cached = serverless(app, { binary: false });
     return cached;
   } catch (error) {
     initError = Object.assign(new Error(error?.message || 'Could not start the application API.'), { status: 503 });
     throw initError;
   }
+}
+
+/** Vercel filesystem catch-alls only match one segment; restore the real /api/... path from rewrite. */
+function restoreApiUrl(req) {
+  const raw = req.url || '/';
+  const qIndex = raw.indexOf('?');
+  const pathname = qIndex === -1 ? raw : raw.slice(0, qIndex);
+  const search = qIndex === -1 ? '' : raw.slice(qIndex + 1);
+  const params = new URLSearchParams(search);
+  const forwarded = params.get('__path');
+  if (!forwarded) {
+    if (pathname === '/api' || pathname.startsWith('/api/')) return;
+    Object.defineProperty(req, 'url', {
+      value: pathname.startsWith('/') ? `/api${pathname}` : `/api/${pathname}`,
+      configurable: true,
+    });
+    return;
+  }
+  params.delete('__path');
+  const rest = params.toString();
+  const path = forwarded.startsWith('/') ? forwarded : `/${forwarded}`;
+  const next = path.startsWith('/api/') || path === '/api' ? path : `/api${path}`;
+  Object.defineProperty(req, 'url', {
+    value: rest ? `${next}?${rest}` : next,
+    configurable: true,
+  });
 }
 
 function sendJson(res, status, body) {
@@ -66,6 +79,7 @@ function sendJson(res, status, body) {
 
 export default async function handler(req, res) {
   try {
+    restoreApiUrl(req);
     return await getHandler()(req, res);
   } catch (error) {
     const status = error?.status >= 400 && error?.status < 600 ? error.status : 503;

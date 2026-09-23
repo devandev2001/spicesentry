@@ -7,8 +7,8 @@
     "README.md": "d6c559d29c5bd22739bc873234dff4bf36ff49ed3b28fa992348b4cc1b8b244b",
     "docs/context-graph.json": "01089119009f83a1d4de511d392e587b8c815567bbe3dcd4fbec9855523fd2ea",
     "docs/ledger-reset-2026-09-21.md": "e5ab7fe90a58cdfbc52e2a9d2d098623701815722c0d6e7850f5c8afcb5abdcd",
-    "docs/login-recovery.md": "5f845032e791046a083435c07ae115e6b71bb0652967d28eef0b5191f4b338a5",
-    "docs/project-context.md": "3e6800f4fd7b8873cfcfc9bc416d142e7c1f6b07783f7f25ef19918576f25905",
+    "docs/login-recovery.md": "93404caeae59215917155db2b3b285ffbb184e312e0954a04349dc331fe00e38",
+    "docs/project-context.md": "3da6d3ef4987947eb937ea4eb91e605520af0e9759d3f8dd3579704ce49291d2",
     "docs/storage-and-recovery.md": "44a415ae77daee0ae3f925a1c18eba4dc5d6ec6acbb559fa390e7f2f22c91d37",
     "eslint.config.js": "2bc4d9cb1c0f4146bb8c24c84f2ab6ee916014c9a20f3f3db9c001a549fd10d4",
     "mcp-server/index.js": "8c69a816f814779bee7e081a206efca1d645ad641f41ee6a809844f1470a04c6",
@@ -42,8 +42,8 @@
     "vite.config.js": "fd15b4ed3930244b0a9ca867bc435eea8609475391ac9484d3e1984063b32385"
   },
   "artifacts": {
-    "graph.json": "0eaf40976343104e5fdcaa9e16a43e24a2c8d6d7c0a1bbf621332ac37b6e5d2f",
-    "GRAPH_REPORT.md": "48bf06d178586d0f78aa29bf9c038293c4659d0b88ffd258ad077f111581b754",
+    "graph.json": "d73c03f9bb1f31f5281f1093809776598b2c85ba3256343c442a73dabefa563e",
+    "GRAPH_REPORT.md": "a01fc1016f9cb762228c44a22c5efe5d86d72e605343041c6427de4af1664628",
     "graph.html": "ac79e6e7f237b06bd115d3cbfb883e745bf085d4a44de7f884f22e6d3e80902a"
   }
 }

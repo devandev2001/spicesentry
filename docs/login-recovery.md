@@ -20,7 +20,7 @@ This version needs a Node API; deploying only `dist/` to a static host will not 
 
 **Vercel (same-origin API)**
 
-The repo includes `api/[...path].mjs` (Express via `serverless-http`), `api/health.mjs`, and `vercel.json` so `/api/*` is served by serverless functions while `dist/` remains the static SPA. Without those API routes, the login screen cannot load user chips (`GET /api/auth/users`).
+The repo includes `api/run.mjs` (Express via `serverless-http`), `api/health.mjs`, and `vercel.json` rewrites so `/api/*` is served by a single serverless function while `dist/` remains the static SPA. Without those API routes, the login screen cannot load user chips (`GET /api/auth/users`).
 
 Set these Vercel Project Environment Variables (Production and Preview as needed):
 

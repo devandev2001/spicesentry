@@ -8,13 +8,21 @@
       "maxDuration": 10,
       "memory": 256
     },
-    "api/[...path].mjs": {
+    "api/run.mjs": {
       "includeFiles": "{server/**,package.json}",
       "maxDuration": 30,
       "memory": 1024
     }
   },
   "rewrites": [
+    {
+      "source": "/api/health",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/run?__path=/$1"
+    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
