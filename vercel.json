@@ -4,14 +4,21 @@
   "outputDirectory": "dist",
   "framework": null,
   "functions": {
-    "api/index.mjs": {
-      "includeFiles": "server/**",
+    "api/health.mjs": {
+      "maxDuration": 10,
+      "memory": 256
+    },
+    "api/[...path].mjs": {
+      "includeFiles": "{server/**,package.json}",
       "maxDuration": 30,
       "memory": 1024
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" }
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {

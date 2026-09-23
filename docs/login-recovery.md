@@ -20,7 +20,7 @@ This version needs a Node API; deploying only `dist/` to a static host will not 
 
 **Vercel (same-origin API)**
 
-The repo includes `api/index.mjs` and `vercel.json` so `/api/*` is served by a serverless function that wraps the Express API, while `dist/` remains the static SPA. Without those API routes, the login screen cannot load user chips (`GET /api/auth/users`).
+The repo includes `api/[...path].mjs` (Express via `serverless-http`), `api/health.mjs`, and `vercel.json` so `/api/*` is served by serverless functions while `dist/` remains the static SPA. Without those API routes, the login screen cannot load user chips (`GET /api/auth/users`).
 
 Set these Vercel Project Environment Variables (Production and Preview as needed):
 
@@ -28,7 +28,7 @@ Set these Vercel Project Environment Variables (Production and Preview as needed
 - `FIREBASE_SERVICE_ACCOUNT_JSON` — full Firebase Admin service-account JSON as one string (never use `VITE_` for this)
 - `APP_ORIGIN` — exact public HTTPS origin for Production (example: `https://your-app.vercel.app`). Preview can omit this; the API falls back to the request host
 
-Redeploy after saving env vars. Confirm in the browser Network tab that `GET /api/auth/users` returns `200` with a `users` array. A Dockerfile is also provided for a conventional Node host (`npm start`) if you prefer a long-running server instead of serverless.
+Redeploy after saving env vars. First open `/api/health` — it should return JSON with `authSecretConfigured` and `firebaseConfigured` both `true`. Then confirm in the Network tab that `GET /api/auth/users` returns `200` with a `users` array. A Dockerfile is also provided for a conventional Node host (`npm start`) if you prefer a long-running server instead of serverless.
 
 The provided login limiter is process-local. Before running multiple instances, use a shared limiter and review trusted proxy configuration. Sessions are signed and expire after eight hours; logout clears the browser cookie, account deactivation or a PIN change revokes server access. Broader audit findings, including spreadsheet endpoint authentication, historical accounting, and complete pagination, remain separate work. This login repair is not a claim that every production security issue is resolved.
 

@@ -7,12 +7,12 @@
     "README.md": "d6c559d29c5bd22739bc873234dff4bf36ff49ed3b28fa992348b4cc1b8b244b",
     "docs/context-graph.json": "01089119009f83a1d4de511d392e587b8c815567bbe3dcd4fbec9855523fd2ea",
     "docs/ledger-reset-2026-09-21.md": "e5ab7fe90a58cdfbc52e2a9d2d098623701815722c0d6e7850f5c8afcb5abdcd",
-    "docs/login-recovery.md": "ac893d018af9f54ac87efa7dc7c0b8e18272db4c8d92339fc7a59ce4460d45f0",
-    "docs/project-context.md": "138508d0553233e0646348c1d3db413855ebf10b538b1174c65ebba0f0a051c8",
+    "docs/login-recovery.md": "5f845032e791046a083435c07ae115e6b71bb0652967d28eef0b5191f4b338a5",
+    "docs/project-context.md": "3e6800f4fd7b8873cfcfc9bc416d142e7c1f6b07783f7f25ef19918576f25905",
     "docs/storage-and-recovery.md": "44a415ae77daee0ae3f925a1c18eba4dc5d6ec6acbb559fa390e7f2f22c91d37",
     "eslint.config.js": "2bc4d9cb1c0f4146bb8c24c84f2ab6ee916014c9a20f3f3db9c001a549fd10d4",
     "mcp-server/index.js": "8c69a816f814779bee7e081a206efca1d645ad641f41ee6a809844f1470a04c6",
-    "package.json": "a44675bdcc7a2aa946dbfa098f0b0da6055029ce629f379f65d8cbdebcf11f7a",
+    "package.json": "e739ad043c2ebe8089f861ca3cfd9796c3d9f0158bc3836ffdb9cef83cdf9d08",
     "public/sw.js": "68a7c29a75f133e9220a038566c50ed6a9a33360120ad08bd7b8235867df4273",
     "scripts/backfill-sheet-to-firestore.mjs": "0e681cac32478ea8b75d6ff9470389b7d7bc203e5a27e69202f3a5401b37487d",
     "scripts/build-context.py": "4c2a4d60b7c28616e2b52662ea3c8206d181b95f96bbd73aeaf2f8c6afbde949",
@@ -27,7 +27,7 @@
     "src/App.jsx": "80fe4999d2a436bf1208ffbd85caeb1400d4a62734494e95cec102c6b52a29ce",
     "src/AuthContext.jsx": "c1c5fc018ff573b2fb6e57b7da2a909ad228a0a9ac026f699aa5c2c69f64b717",
     "src/CPanel.jsx": "82bdcfbe6a9d150ae100743000a8e56f09688c6dfead727e475415108e689724",
-    "src/LoginPage.jsx": "c1d7a40e313fab4951d18a5f83518e6ccfaa3bef10762b6dce95438d1bb15c15",
+    "src/LoginPage.jsx": "4f2f6cae7c46c8d339d708e4fc25317a4e3ff9672f08c84f4f98bba092a4bfa6",
     "src/api.js": "5899b855ac12f191c850b6dabca30b6ebb15a9d8a0efd43949838e5f52606b9f",
     "src/auth-context.js": "4dba5fca78832d422ac6d89020e2729f30cd1f4a6c24c6c88986f37ffd2c7e7f",
     "src/firebase.js": "8313e3b0c1627e071b2fe17fcb213ce8e9ac2b501ffbee328bb574bda265f83f",
@@ -42,8 +42,8 @@
     "vite.config.js": "fd15b4ed3930244b0a9ca867bc435eea8609475391ac9484d3e1984063b32385"
   },
   "artifacts": {
-    "graph.json": "30f294de430845206f0c4fd3f01d143e65632d936db9b6f7c9adab03c653d4c8",
-    "GRAPH_REPORT.md": "9ba2407d1474639097f127ed0ea57998296cbb461e575a72b24593925a3fbd03",
+    "graph.json": "0eaf40976343104e5fdcaa9e16a43e24a2c8d6d7c0a1bbf621332ac37b6e5d2f",
+    "GRAPH_REPORT.md": "48bf06d178586d0f78aa29bf9c038293c4659d0b88ffd258ad077f111581b754",
     "graph.html": "ac79e6e7f237b06bd115d3cbfb883e745bf085d4a44de7f884f22e6d3e80902a"
   }
 }
